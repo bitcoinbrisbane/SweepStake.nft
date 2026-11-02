@@ -49,7 +49,8 @@ export function friendlyError(err: unknown): string {
     return err.shortMessage;
   }
   if (err instanceof Error) {
-    return /user (rejected|denied)/i.test(err.message) ? "You cancelled that in your wallet." : err.message;
+    // WalletConnect says "Connection request reset" when someone closes its window.
+    return /user (rejected|denied)|connection request reset/i.test(err.message) ? "You cancelled that in your wallet." : err.message;
   }
   return "Something went wrong. Please try again.";
 }

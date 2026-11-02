@@ -11,7 +11,7 @@ The contract is being replaced, and the replacement isn't on mainnet yet.
 | | |
 |---|---|
 | Entry page | https://sweepstake-6wo88.ondigitalocean.app says the sweep isn't open yet. Add `?testnet=true` to use the test contract |
-| Test contract, on Sepolia | [`0x6E6eCbEC6106d31b340a2Bea1c124b9b2f377bb6`](https://sepolia.etherscan.io/address/0x6E6eCbEC6106d31b340a2Bea1c124b9b2f377bb6#code) |
+| Test contract, on Sepolia | [`0xd3c2Ba3e1aC1910EA8eF7DEE920f5cC6AC4d91C4`](https://sepolia.etherscan.io/address/0xd3c2Ba3e1aC1910EA8eF7DEE920f5cC6AC4d91C4#code) |
 | Old contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) uses an earlier design. Don't enter it |
 | Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
 
@@ -159,7 +159,7 @@ yarn dev
 
 `yarn build` writes a static site to `web/dist`, which can be hosted anywhere. The address is built into the page, so rebuild if it changes. Anyone with the link can enter, because the contract has no allowlist.
 
-It works with browser wallets only, so on a phone, open the page in your wallet app's browser. If the contract's ABI changes, run `forge build` and then `yarn sync-abi` in `web/`.
+It works with browser wallets, and with phone wallets such as Trust through WalletConnect when `VITE_WALLETCONNECT_PROJECT_ID` is set. That's a free project id from [Reown](https://dashboard.reown.com), and the site's domain has to be on the project's allowlist. If the contract's ABI changes, run `forge build` and then `yarn sync-abi` in `web/`.
 
 ### Hosting
 

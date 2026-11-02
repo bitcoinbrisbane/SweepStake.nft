@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createWalletClient, custom, getAddress, numberToHex, type Address, type EIP1193Provider } from "viem";
 import type { Wallet } from "./chain";
-import { CHAIN, EXPLORER } from "./config";
+import { CHAIN, EXPLORER, WALLETCONNECT_PROJECT_ID } from "./config";
+import { disconnectWalletConnect, walletConnectProvider } from "./walletconnect";
 
 export type WalletOption = {
   info: { uuid: string; name: string; icon: string; rdns: string };
@@ -9,6 +10,12 @@ export type WalletOption = {
 };
 
 const STORAGE_KEY = "sweep.wallet";
+const WALLETCONNECT = "walletconnect";
+
+const walletConnectOption: WalletOption = {
+  info: { uuid: WALLETCONNECT, name: "WalletConnect", icon: "", rdns: WALLETCONNECT },
+  provider: walletConnectProvider,
+};
 
 // Browser storage can throw in private windows. Forgetting the wallet is harmless.
 function remembered(): string | null {
@@ -53,8 +60,8 @@ export function useWallet() {
   }, []);
 
   const options = useMemo(() => {
-    if (announced.length) return announced;
-    return legacy ? [legacy] : [];
+    const inBrowser = announced.length ? announced : legacy ? [legacy] : [];
+    return WALLETCONNECT_PROJECT_ID ? [...inBrowser, walletConnectOption] : inBrowser;
   }, [announced, legacy]);
 
   const adopt = useCallback(async (option: WalletOption, accounts: readonly string[]) => {
@@ -75,11 +82,12 @@ export function useWallet() {
   );
 
   const disconnect = useCallback(() => {
+    if (active?.info.rdns === WALLETCONNECT) void disconnectWalletConnect();
     setActive(null);
     setAccount(null);
     setChainId(null);
     remember(null);
-  }, []);
+  }, [active]);
 
   const switchChain = useCallback(async () => {
     if (!active) return;

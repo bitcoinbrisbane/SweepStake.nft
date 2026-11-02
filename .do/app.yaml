@@ -20,8 +20,12 @@ static_sites:
       # The test contract on Sepolia, used when the URL has ?testnet=true.
       - key: VITE_TESTNET_SWEEP_ADDRESS
         scope: BUILD_TIME
-        value: "0x6E6eCbEC6106d31b340a2Bea1c124b9b2f377bb6"
-      # mainnet, base or base-sepolia.
+        value: "0xd3c2Ba3e1aC1910EA8eF7DEE920f5cC6AC4d91C4"
+      # From dashboard.reown.com. It's public, and it adds WalletConnect for phone wallets.
+      - key: VITE_WALLETCONNECT_PROJECT_ID
+        scope: BUILD_TIME
+        value: "170f4fcaa020f3a6158f396730426926"
+      # mainnet, base, base-sepolia or sepolia.
       - key: VITE_CHAIN
         scope: BUILD_TIME
         value: mainnet

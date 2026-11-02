@@ -41,6 +41,11 @@ export const EXPLORER = CHAIN.blockExplorers?.default.url ?? "";
 /** 3 Nov 2026 3:00pm AEDT. The race time isn't onchain, only the close of entries and the results time are. */
 export const RACE_START = 1793678400;
 
+export const RPC_URL: string = customRpc || (network ?? NETWORKS.mainnet).rpcs[0];
+
+/** From Reown's dashboard. It's public, and without one the page just doesn't offer WalletConnect. */
+export const WALLETCONNECT_PROJECT_ID: string = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "";
+
 const transport = () =>
   customRpc ? http(customRpc) : fallback((network ?? NETWORKS.mainnet).rpcs.map((url) => http(url)));
 
