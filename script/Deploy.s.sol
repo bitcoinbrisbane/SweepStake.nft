@@ -3,30 +3,37 @@ pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {MelbourneCupSweep} from "../src/MelbourneCupSweep.sol";
+import {Sweepstakes} from "../src/Sweepstakes.sol";
 
-/// @notice Deploys the 2026 Melbourne Cup sweep.
+/// @notice Deploys Sweepstakes, creates the 2026 Melbourne Cup race and opens one sweep per price.
 ///
 ///   forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 ///
 /// Optional env overrides:
-///   USDT            token address        (default: Ethereum mainnet USDT)
-///   ENTRY_FEE       in token base units  (default: 10 USDT = 10_000_000)
-///   ENTRIES_CLOSE   unix seconds         (default: 1793674800 = 3 Nov 2026 2:00pm AEDT, 1:00pm Brisbane)
+///   USDT            token address                      (default: Ethereum mainnet USDT)
+///   SWEEP_FEES      comma-separated, token base units  (default: 5,10,50 USDT = 5000000,10000000,50000000)
+///   ENTRIES_CLOSE   unix seconds                       (default: 1793674800 = 3 Nov 2026 2:00pm AEDT, 1:00pm Brisbane)
 contract Deploy is Script {
     address constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
-    function run() external returns (MelbourneCupSweep sweep) {
+    function run() external returns (Sweepstakes s) {
         address usdt = vm.envOr("USDT", MAINNET_USDT);
-        uint256 fee = vm.envOr("ENTRY_FEE", uint256(10e6));
         uint64 close = uint64(vm.envOr("ENTRIES_CLOSE", uint256(1793674800)));
+        uint256[] memory defaults = new uint256[](3);
+        defaults[0] = 5e6; defaults[1] = 10e6; defaults[2] = 50e6;
+        uint256[] memory fees = vm.envOr("SWEEP_FEES", ",", defaults);
 
         vm.startBroadcast();
-        sweep = new MelbourneCupSweep(IERC20(usdt), fee, close, field());
+        s = new Sweepstakes(IERC20(usdt));
+        uint256 raceId = s.createRace("Melbourne Cup 2026", close, field());
+        for (uint256 i; i < fees.length; ++i) {
+            uint256 id = s.createSweep(raceId, fees[i]);
+            console.log("Sweep", id, "entry fee", fees[i]);
+        }
         vm.stopBroadcast();
 
-        console.log("MelbourneCupSweep:", address(sweep));
-        console.log("Entry fee:", fee);
+        console.log("Sweepstakes:", address(s));
+        console.log("Race id:", raceId);
         console.log("Entries close:", close);
     }
 

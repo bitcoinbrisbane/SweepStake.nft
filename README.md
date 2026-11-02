@@ -1,29 +1,35 @@
 # SweepStake.nft
 
-**Melbourne Cup sweep**
+Onchain sweepstakes for horse races, paid in USDT on Ethereum mainnet. First up: the 2026 Melbourne Cup (Tuesday 3 November, Flemington).
 
-An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in USDT on Ethereum mainnet.
+One contract hosts any number of races, and any number of sweeps on each race at different ticket prices. The default deployment opens 5, 10 and 50 USDT sweeps on the Cup.
 
 ## How it works
 
-1. **Enter.** Approve the entry fee (10 USDT by default), then call `enter()`. Each call buys one ticket, and you can buy more than one. There are as many tickets as there are horses, so 24 at most.
-2. **Draw.** When entries close, anyone calls `draw()`. One shuffle gives every ticket a different horse. If all 24 tickets sell, the draw can happen early.
-3. **Race.** After the race, the owner calls `settle(horse)` with the winner.
-4. **Claim.** The holder of the winning horse calls `claim(ticketId)` and takes the whole pool.
+1. **The owner creates a race.** This sets the field and the time entries close. Then the owner opens sweeps on it, each with its own ticket price.
+2. **Enter.** Approve the sweep's entry fee, then call `enter(sweepId)`. Each call buys one ticket, and you can buy more than one.
+3. **Fill and draw.** A sweep needs one ticket per horse, so 24 for the Cup. Once it's full, anyone calls `draw(sweepId)`, and one shuffle gives every ticket a different horse.
+4. **Settle.** After the race, the owner calls `settle(raceId, horse)` once. Every drawn sweep on that race then pays out.
+5. **Claim.** The ticket holding the winner calls `claim(sweepId, ticketId)` and takes that sweep's pool.
 
-### Edge cases
+## Refunds
+
+A sweep only runs if it fills. Every case where it doesn't ends in a full refund through the same `claim(sweepId, ticketId)` call:
 
 | Situation | What happens |
 |---|---|
-| Nobody holds the winning horse (fewer than 24 entries) | The sweep is cancelled and everyone claims their fee back |
-| A horse is scratched after the draw | The owner calls `scratch(horse)`. That ticket gets a refund and the pool shrinks |
-| A horse is scratched before the draw, and the sweep was full | The last ticket bought misses out and gets a refund |
-| The owner never settles | Anyone can call `cancel()` a week after entries close, and everyone gets a refund |
-| You want a different fee | The owner calls `setEntryFee()`, which works only before the first entry |
+| The sweep isn't full when entries close | Everyone in that sweep is refunded |
+| The sweep is full but nobody called `draw` before the race was settled | Everyone in that sweep is refunded, so draw as soon as a sweep fills |
+| A horse is scratched before the draw | The sweep needs one fewer ticket. If it was already full, the last ticket bought is refunded |
+| A horse is scratched after the draw | That ticket is refunded and the pool shrinks by one fee |
+| The owner cancels a sweep (`cancelSweep`) before its draw | Everyone in it is refunded |
+| The owner cancels the race, or hasn't settled within 7 days of entries closing | Anyone can call `cancelRace`, and every sweep on the race is refunded |
+
+Useful views: `sweepStatus(sweepId)` returns Open, Full, Drawn, Settled or Refunding. `ticketsRemaining(sweepId)` returns how many tickets are still needed, and `claimable(sweepId, ticketId)` returns what a ticket can collect right now.
 
 ## Randomness
 
-The draw uses `block.prevrandao`. That's fine for a sweep between mates, but a validator proposing the draw block could in principle bias it. For a large pool, swap it for Chainlink VRF.
+Each draw uses `block.prevrandao`. That's fine for sweeps between mates, but a validator proposing the draw block could in principle bias it. For large pools, swap it for Chainlink VRF.
 
 ## The field
 
@@ -65,11 +71,13 @@ forge test
 ## Deploy
 
 ```sh
-# Defaults: mainnet USDT, 10 USDT entry, entries close 3 Nov 2026 2:00pm AEDT (1:00pm Brisbane)
+# Defaults: mainnet USDT; 5, 10 and 50 USDT sweeps; entries close 3 Nov 2026 2:00pm AEDT (1:00pm Brisbane)
 forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 
-# Override any of them
-ENTRY_FEE=5000000 ENTRIES_CLOSE=1793674800 forge script script/Deploy.s.sol ...
+# Different prices (USDT has 6 decimals, so 20 USDT = 20000000)
+SWEEP_FEES=20000000,100000000 forge script script/Deploy.s.sol ...
 ```
 
-USDT has 6 decimals, so 10 USDT = `10000000`. USDT also requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
+After deploying, the owner can add more sweeps with `createSweep(raceId, fee)` any time before entries close.
+
+USDT requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
