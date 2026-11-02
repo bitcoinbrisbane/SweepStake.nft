@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createWalletClient, custom, getAddress, numberToHex, type Address, type EIP1193Provider } from "viem";
 import type { Wallet } from "./chain";
-import { CHAIN } from "./config";
+import { CHAIN, EXPLORER } from "./config";
 
 export type WalletOption = {
   info: { uuid: string; name: string; icon: string; rdns: string };
@@ -82,10 +82,27 @@ export function useWallet() {
   }, []);
 
   const switchChain = useCallback(async () => {
-    await active?.provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: numberToHex(CHAIN.id) }],
-    });
+    if (!active) return;
+    const chainId = numberToHex(CHAIN.id);
+    try {
+      await active.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+    } catch (err) {
+      // 4902 means the wallet doesn't know this network yet, which is common for Base, so offer to add it.
+      const { code, data } = err as { code?: number; data?: { originalError?: { code?: number } } };
+      if (code !== 4902 && data?.originalError?.code !== 4902) throw err;
+      await active.provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId,
+            chainName: CHAIN.name,
+            nativeCurrency: CHAIN.nativeCurrency,
+            rpcUrls: CHAIN.rpcUrls.default.http,
+            blockExplorerUrls: EXPLORER ? [EXPLORER] : undefined,
+          },
+        ],
+      });
+    }
   }, [active]);
 
   // Reconnect quietly if this wallet was connected last time. eth_accounts never prompts.

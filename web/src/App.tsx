@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
 import type { Address } from "viem";
-import { claimTicket, buyTicket, loadMine, loadOverview, usdtLabel, type Progress, type Sweep, type Ticket } from "./chain";
-import { EXPLORER, isConfigured, RACE_START, SWEEP_ADDRESS, USDT_ADDRESS } from "./config";
+import { amountLabel, buyTicket, claimTicket, loadMine, loadOverview, type Progress, type Sweep, type Ticket } from "./chain";
+import { CHAIN, EXPLORER, isConfigured, RACE_START, SWEEP_ADDRESS } from "./config";
 import { friendlyError } from "./errors";
 import { MyTickets } from "./MyTickets";
+import { Runners } from "./Runners";
 import { SweepCard, type Message } from "./SweepCard";
 import { useNow, usePoll } from "./usePoll";
 import { useWallet, type WalletOption } from "./wallet";
@@ -17,8 +18,8 @@ export default function App() {
         <section className="notice">
           <h1>Melbourne Cup Sweep</h1>
           <p>
-            This page isn't pointed at a contract yet. Set <code>VITE_SWEEP_ADDRESS</code> to the deployed address,
-            then rebuild.
+            This page isn't pointed at a contract yet. Set <code>VITE_SWEEP_ADDRESS</code> to the deployed address, and{" "}
+            <code>VITE_CHAIN</code> if it isn't on Ethereum, then rebuild.
           </p>
         </section>
       </main>
@@ -97,7 +98,7 @@ function Sweepstake() {
     setAction({ sweepId: target.id, progress: null });
     try {
       await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
-      setSweepMessage({ sweepId: target.id, tone: "good", text: "You're in. Your ticket is below." });
+      setSweepMessage({ sweepId: target.id, tone: "good", text: "You're in. Your NFT ticket is below." });
     } catch (err) {
       setSweepMessage({ sweepId: target.id, tone: "bad", text: friendlyError(err) });
     } finally {
@@ -113,7 +114,7 @@ function Sweepstake() {
     setAction({ ticketId: ticket.id, progress: null });
     try {
       await claimTicket(wallet.client, ticket.id, (progress) => setAction({ ticketId: ticket.id, progress }));
-      setTicketMessage({ ticketId: ticket.id, tone: "good", text: `${usdtLabel(ticket.claimable)} is on its way to your wallet.` });
+      setTicketMessage({ ticketId: ticket.id, tone: "good", text: `${ticket.claimableLabel} is on its way to your wallet.` });
     } catch (err) {
       setTicketMessage({ ticketId: ticket.id, tone: "bad", text: friendlyError(err) });
     } finally {
@@ -125,6 +126,8 @@ function Sweepstake() {
 
   const data = overview.data;
   const closed = data ? now >= data.entriesClose : false;
+  const winner = data && data.winningHorse !== null ? data.runners[data.winningHorse].name : null;
+  const symbol = data?.token.symbol ?? "stablecoins";
 
   return (
     <main className="page">
@@ -133,7 +136,7 @@ function Sweepstake() {
         {account ? (
           <div className="wallet-chip">
             <span>{shortAddress(account)}</span>
-            {mine.data && <span className="wallet-balance">{usdtLabel(mine.data.usdt)}</span>}
+            {mine.data && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
             <button className="link-button" onClick={wallet.disconnect}>
               Disconnect
             </button>
@@ -179,19 +182,21 @@ function Sweepstake() {
 
       {account && !wallet.onRightChain && (
         <div className="alert">
-          <span>Your wallet is on a different network. This sweep runs on Ethereum.</span>
+          <span>Your wallet is on a different network. This sweep runs on {CHAIN.name}.</span>
           <button className="ghost-button" onClick={() => void switchChain()}>
-            Switch to Ethereum
+            Switch to {CHAIN.name}
           </button>
         </div>
       )}
 
       <section className="hero">
         <p className="eyebrow">Melbourne Cup 2026</p>
-        <h1>The Sweep</h1>
-        <p className="tagline">Pick your stake. Get a random horse. If it wins, you take the pool.</p>
-        {data?.winner ? (
-          <p className="clock clock-winner">{data.winner} won the Cup</p>
+        <h1>
+          The Sweep <span className="hero-trophy" aria-hidden="true">🏆</span>
+        </h1>
+        <p className="tagline">Pick your stake and buy an NFT ticket. Get a random horse. If it wins, you take the pool.</p>
+        {winner ? (
+          <p className="clock clock-winner">{winner} won the Cup</p>
         ) : data && !closed ? (
           <p className="clock">
             Entries close in <strong>{countdown(data.entriesClose - now)}</strong>
@@ -202,14 +207,16 @@ function Sweepstake() {
         ) : data ? (
           <p className="clock">
             Entries are closed
-            <span className="clock-when">Race starts {when(RACE_START)}</span>
+            <span className="clock-when">
+              Race starts {when(RACE_START)} · Results from {when(data.resultsOpen)}
+            </span>
           </p>
         ) : null}
       </section>
 
       {overview.failed && (
         <p className="alert" role="status">
-          Can't reach Ethereum right now. Trying again shortly.
+          Can't reach {CHAIN.name} right now. Trying again shortly.
         </p>
       )}
 
@@ -247,16 +254,20 @@ function Sweepstake() {
         />
       )}
 
+      {data && <Runners overview={data} myTickets={mine.data?.tickets ?? []} />}
+
       <section className="how">
         <h2>How it works</h2>
         <ol>
           <li>
-            <strong>Buy a ticket.</strong> Pay in USDT on Ethereum, with a little ETH for gas. Your wallet asks twice: once
-            to allow the USDT, and once to buy. Each ticket is an NFT, and you can buy as many as you like.
+            <strong>Buy an NFT ticket.</strong> Pay in {symbol} on {CHAIN.name}, with a little ETH for gas. Your wallet asks
+            twice: once to allow the {symbol}, and once to buy. Every ticket is a real NFT in your wallet, with its pixel art
+            stored onchain. You can buy as many as you like, and whoever holds a ticket when claiming gets paid, so you can
+            send or sell them too.
           </li>
           <li>
-            <strong>Get your horse.</strong> When entries close, every ticket in a sweep gets a different random horse. It
-            shows up on your NFT.
+            <strong>Get your horse.</strong> When entries close, every NFT ticket in a sweep gets a different random horse. It
+            shows up on your NFT, and in the runners above.
           </li>
           <li>
             <strong>Watch the race.</strong> In each sweep, whoever holds the NFT with the winning horse claims that sweep's
@@ -277,9 +288,11 @@ function Sweepstake() {
         <a href={`${EXPLORER}/address/${SWEEP_ADDRESS}#code`} target="_blank" rel="noreferrer">
           Sweep contract
         </a>
-        <a href={`${EXPLORER}/token/${USDT_ADDRESS}`} target="_blank" rel="noreferrer">
-          USDT
-        </a>
+        {data && (
+          <a href={`${EXPLORER}/token/${data.token.address}`} target="_blank" rel="noreferrer">
+            {data.token.symbol}
+          </a>
+        )}
       </footer>
     </main>
   );

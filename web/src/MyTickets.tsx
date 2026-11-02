@@ -1,4 +1,4 @@
-import { usdtLabel, type Progress, type Ticket } from "./chain";
+import type { Progress, Ticket } from "./chain";
 import { EXPLORER, SWEEP_ADDRESS } from "./config";
 import { ProgressLine, type Message } from "./SweepCard";
 
@@ -15,11 +15,11 @@ export function MyTickets(props: {
 
   return (
     <section className="tickets">
-      <h2>Your tickets</h2>
+      <h2>Your NFT tickets</h2>
       {tickets === null ? (
-        <p className="muted">Looking for your tickets…</p>
+        <p className="muted">Looking for your NFT tickets…</p>
       ) : tickets.length === 0 ? (
-        <p className="muted">No tickets in this wallet yet.</p>
+        <p className="muted">No NFT tickets in this wallet yet.</p>
       ) : (
         <ul className="ticket-grid">
           {tickets.map((ticket) => {
@@ -27,12 +27,12 @@ export function MyTickets(props: {
             const isActive = activeTicket === ticket.id;
             return (
               <li key={ticket.id.toString()} className="ticket">
-                <img src={ticket.image} alt={`Sweep ticket ${ticket.number}: ${ticket.horse}. ${ticket.status}.`} />
+                <img src={ticket.image} alt={`NFT ticket ${ticket.number}: ${ticket.horse}. ${ticket.status}.`} />
                 {ticket.claimable > 0n && (
                   <button className="buy-button" disabled={busy || !canClaim} onClick={() => onClaim(ticket)}>
                     {isActive
                       ? "Working…"
-                      : `Claim ${usdtLabel(ticket.claimable)} ${prize ? "prize" : "refund"}`}
+                      : `Claim ${ticket.claimableLabel} ${prize ? "prize" : "refund"}`}
                   </button>
                 )}
                 {isActive && progress && <ProgressLine progress={progress} />}

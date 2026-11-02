@@ -19,6 +19,11 @@ export const sweepAbi = [
         "internalType": "uint64"
       },
       {
+        "name": "resultsOpen_",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "horses_",
         "type": "string[]",
         "internalType": "string[]"
@@ -213,6 +218,25 @@ export const sweepAbi = [
   },
   {
     "type": "function",
+    "name": "horseImage",
+    "inputs": [
+      {
+        "name": "horse",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "horseName",
     "inputs": [
       {
@@ -361,6 +385,19 @@ export const sweepAbi = [
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resultsOpen",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -990,6 +1027,11 @@ export const sweepAbi = [
   {
     "type": "error",
     "name": "BadSweep",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadTimes",
     "inputs": []
   },
   {

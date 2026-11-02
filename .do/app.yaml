@@ -16,3 +16,7 @@ static_sites:
       - key: VITE_SWEEP_ADDRESS
         scope: BUILD_TIME
         value: ""
+      # mainnet, base or base-sepolia.
+      - key: VITE_CHAIN
+        scope: BUILD_TIME
+        value: mainnet

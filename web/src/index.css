@@ -182,6 +182,10 @@ button:disabled {
   font: 700 clamp(56px, 13vw, 104px) / 1 var(--serif);
 }
 
+.hero-trophy {
+  font-size: 0.72em;
+}
+
 .tagline {
   max-width: 34em;
   font-size: 18px;
@@ -365,6 +369,133 @@ button:disabled {
 .ticket-link {
   font-size: 13px;
   text-align: center;
+}
+
+/* Runners */
+
+.runners {
+  display: grid;
+  gap: 16px;
+}
+
+.runners h2 {
+  font: 700 28px var(--serif);
+}
+
+.runners > .muted {
+  max-width: 44em;
+  font-size: 14px;
+}
+
+.runner-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.runner-table th {
+  padding: 6px 4px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.runner-table td {
+  padding: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.runner-table th.runner-sweep,
+.runner-table td.runner-sweep {
+  width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--tier);
+}
+
+.runner-horse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.runner-art {
+  flex: none;
+  background: var(--silver);
+  border-radius: 4px;
+}
+
+.runner-no {
+  flex: none;
+  width: 1.4em;
+  text-align: right;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.runner-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.runner-name small {
+  color: var(--bad);
+}
+
+.runner-scratched .runner-name,
+.runner-scratched .runner-art {
+  opacity: 0.6;
+}
+
+.runner-winner .runner-name {
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.runner-you {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--tier);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  .runner-table {
+    font-size: 14px;
+  }
+
+  .runner-table td {
+    padding: 4px 2px;
+  }
+
+  .runner-table th.runner-sweep,
+  .runner-table td.runner-sweep {
+    width: 40px;
+  }
+
+  .runner-horse {
+    gap: 5px;
+  }
+
+  .runner-art {
+    width: 30px;
+    height: 30px;
+  }
+
+  .runner-no {
+    width: 1.2em;
+    font-size: 12px;
+  }
+
+  .runner-you {
+    padding: 0 5px;
+    font-size: 12px;
+  }
 }
 
 /* How it works */
