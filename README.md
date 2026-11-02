@@ -113,6 +113,18 @@ yarn dev
 
 It works with browser wallets only, so on a phone, open the page in your wallet app's browser. If the contract's ABI changes, run `forge build` and then `yarn sync-abi` in `web/`.
 
+### Hosting
+
+The page is on DigitalOcean App Platform, in the SweepStake project on the Block 52 team: https://sweepstake-6wo88.ondigitalocean.app
+
+It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, then apply it:
+
+```sh
+doctl --context block52 apps update bca3bf67-c831-47a1-b3be-4cac0e29100f --spec .do/app.yaml
+```
+
+To redeploy after pushing changes, run `doctl --context block52 apps create-deployment bca3bf67-c831-47a1-b3be-4cac0e29100f`. Always pass `--context block52`, because `doctl`'s default context may be a different team.
+
 ## Race day
 
 These are all owner calls. Add `--rpc-url $ETH_RPC_URL --account <keystore>` to each `cast send`.
