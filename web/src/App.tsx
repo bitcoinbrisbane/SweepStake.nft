@@ -1,0 +1,286 @@
+import { useCallback, useState } from "react";
+import type { Address } from "viem";
+import { claimTicket, buyTicket, loadMine, loadOverview, usdtLabel, type Progress, type Sweep, type Ticket } from "./chain";
+import { EXPLORER, isConfigured, RACE_START, SWEEP_ADDRESS, USDT_ADDRESS } from "./config";
+import { friendlyError } from "./errors";
+import { MyTickets } from "./MyTickets";
+import { SweepCard, type Message } from "./SweepCard";
+import { useNow, usePoll } from "./usePoll";
+import { useWallet, type WalletOption } from "./wallet";
+
+const POLL_MS = 15_000;
+
+export default function App() {
+  if (!isConfigured) {
+    return (
+      <main className="page">
+        <section className="notice">
+          <h1>Melbourne Cup Sweep</h1>
+          <p>
+            This page isn't pointed at a contract yet. Set <code>VITE_SWEEP_ADDRESS</code> to the deployed address,
+            then rebuild.
+          </p>
+        </section>
+      </main>
+    );
+  }
+  return <Sweepstake />;
+}
+
+function shortAddress(address: Address) {
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function countdown(seconds: number) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [d ? `${d}d` : "", d || h ? `${h}h` : "", `${m}m`, `${s}s`].filter(Boolean).join(" ");
+}
+
+const whenFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+const when = (unix: number) => whenFormat.format(new Date(unix * 1000));
+
+/** One wallet action at a time, because wallets queue their prompts and the steps would get confusing. */
+type Action = { sweepId?: number; ticketId?: bigint; progress: Progress | null };
+
+function Sweepstake() {
+  const wallet = useWallet();
+  const now = useNow();
+  const overview = usePoll(loadOverview, POLL_MS);
+
+  const { account } = wallet;
+  const loadAccount = useCallback(() => (account ? loadMine(account) : Promise.resolve(null)), [account]);
+  const mine = usePoll(loadAccount, POLL_MS);
+
+  const [picker, setPicker] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [action, setAction] = useState<Action | null>(null);
+  const [sweepMessage, setSweepMessage] = useState<(Message & { sweepId: number }) | null>(null);
+  const [ticketMessage, setTicketMessage] = useState<(Message & { ticketId: bigint }) | null>(null);
+
+  async function connectTo(option: WalletOption) {
+    setWalletError(null);
+    setPicker(false);
+    try {
+      await wallet.connect(option);
+    } catch (err) {
+      setWalletError(friendlyError(err));
+    }
+  }
+
+  function requestConnect() {
+    if (wallet.options.length === 1) void connectTo(wallet.options[0]);
+    else setPicker(true);
+  }
+
+  async function switchChain() {
+    setWalletError(null);
+    try {
+      await wallet.switchChain();
+    } catch (err) {
+      setWalletError(friendlyError(err));
+    }
+  }
+
+  async function buy(target: Sweep) {
+    if (!wallet.client) return;
+    setSweepMessage(null);
+    setAction({ sweepId: target.id, progress: null });
+    try {
+      await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
+      setSweepMessage({ sweepId: target.id, tone: "good", text: "You're in. Your ticket is below." });
+    } catch (err) {
+      setSweepMessage({ sweepId: target.id, tone: "bad", text: friendlyError(err) });
+    } finally {
+      setAction(null);
+      void overview.refresh();
+      void mine.refresh();
+    }
+  }
+
+  async function claim(ticket: Ticket) {
+    if (!wallet.client) return;
+    setTicketMessage(null);
+    setAction({ ticketId: ticket.id, progress: null });
+    try {
+      await claimTicket(wallet.client, ticket.id, (progress) => setAction({ ticketId: ticket.id, progress }));
+      setTicketMessage({ ticketId: ticket.id, tone: "good", text: `${usdtLabel(ticket.claimable)} is on its way to your wallet.` });
+    } catch (err) {
+      setTicketMessage({ ticketId: ticket.id, tone: "bad", text: friendlyError(err) });
+    } finally {
+      setAction(null);
+      void overview.refresh();
+      void mine.refresh();
+    }
+  }
+
+  const data = overview.data;
+  const closed = data ? now >= data.entriesClose : false;
+
+  return (
+    <main className="page">
+      <header className="topbar">
+        <span className="brand">SweepStake.nft</span>
+        {account ? (
+          <div className="wallet-chip">
+            <span>{shortAddress(account)}</span>
+            {mine.data && <span className="wallet-balance">{usdtLabel(mine.data.usdt)}</span>}
+            <button className="link-button" onClick={wallet.disconnect}>
+              Disconnect
+            </button>
+          </div>
+        ) : (
+          <button className="ghost-button" onClick={requestConnect}>
+            Connect wallet
+          </button>
+        )}
+      </header>
+
+      {picker && !account && (
+        <div className="picker" role="dialog" aria-label="Choose a wallet">
+          {wallet.options.length ? (
+            <>
+              <p>Choose a wallet</p>
+              <div className="picker-options">
+                {wallet.options.map((option) => (
+                  <button key={option.info.uuid} className="ghost-button" onClick={() => void connectTo(option)}>
+                    {option.info.icon && <img src={option.info.icon} alt="" width={20} height={20} />}
+                    {option.info.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p>
+              No wallet found. On a phone, open this page in your wallet app's browser. On a computer, install a wallet
+              such as MetaMask or Rabby, then reload this page.
+            </p>
+          )}
+          <button className="link-button" onClick={() => setPicker(false)}>
+            Close
+          </button>
+        </div>
+      )}
+
+      {walletError && (
+        <p className="alert" role="alert">
+          {walletError}
+        </p>
+      )}
+
+      {account && !wallet.onRightChain && (
+        <div className="alert">
+          <span>Your wallet is on a different network. This sweep runs on Ethereum.</span>
+          <button className="ghost-button" onClick={() => void switchChain()}>
+            Switch to Ethereum
+          </button>
+        </div>
+      )}
+
+      <section className="hero">
+        <p className="eyebrow">Melbourne Cup 2026</p>
+        <h1>The Sweep</h1>
+        <p className="tagline">Pick your stake. Get a random horse. If it wins, you take the pool.</p>
+        {data?.winner ? (
+          <p className="clock clock-winner">{data.winner} won the Cup</p>
+        ) : data && !closed ? (
+          <p className="clock">
+            Entries close in <strong>{countdown(data.entriesClose - now)}</strong>
+            <span className="clock-when">
+              {when(data.entriesClose)} · Race starts {when(RACE_START)}
+            </span>
+          </p>
+        ) : data ? (
+          <p className="clock">
+            Entries are closed
+            <span className="clock-when">Race starts {when(RACE_START)}</span>
+          </p>
+        ) : null}
+      </section>
+
+      {overview.failed && (
+        <p className="alert" role="status">
+          Can't reach Ethereum right now. Trying again shortly.
+        </p>
+      )}
+
+      <section aria-label="Sweeps" className="sweeps">
+        {data
+          ? data.sweeps.map((s) => (
+              <SweepCard
+                key={s.id}
+                sweep={s}
+                overview={data}
+                closed={closed}
+                wallet={wallet}
+                mine={mine.data}
+                busy={action !== null}
+                progress={action?.sweepId === s.id ? action.progress : null}
+                active={action?.sweepId === s.id}
+                message={sweepMessage?.sweepId === s.id ? sweepMessage : null}
+                onBuy={(target) => void buy(target)}
+                onConnect={requestConnect}
+                onSwitch={() => void switchChain()}
+              />
+            ))
+          : !overview.failed && <p className="muted loading">Loading the sweeps…</p>}
+      </section>
+
+      {account && (
+        <MyTickets
+          tickets={mine.data?.tickets ?? null}
+          canClaim={wallet.client !== null}
+          busy={action !== null}
+          activeTicket={action?.ticketId ?? null}
+          progress={action?.ticketId !== undefined ? action.progress : null}
+          message={ticketMessage}
+          onClaim={(ticket) => void claim(ticket)}
+        />
+      )}
+
+      <section className="how">
+        <h2>How it works</h2>
+        <ol>
+          <li>
+            <strong>Buy a ticket.</strong> Pay in USDT on Ethereum, with a little ETH for gas. Your wallet asks twice: once
+            to allow the USDT, and once to buy. Each ticket is an NFT, and you can buy as many as you like.
+          </li>
+          <li>
+            <strong>Get your horse.</strong> When entries close, every ticket in a sweep gets a different random horse. It
+            shows up on your NFT.
+          </li>
+          <li>
+            <strong>Watch the race.</strong> In each sweep, whoever holds the NFT with the winning horse claims that sweep's
+            whole pool from this page.
+          </li>
+          <li>
+            <strong>Scratched?</strong> If your horse is scratched, or nobody in your sweep holds the winner, you can claim
+            your entry fee back here.
+          </li>
+        </ol>
+        <p className="muted">
+          Only the sweep's owner can run the draw and enter the result, so you're trusting them to do both fairly. If they
+          never enter a result, anyone can cancel a sweep a week after entries close, and its tickets get refunds.
+        </p>
+      </section>
+
+      <footer className="footer">
+        <a href={`${EXPLORER}/address/${SWEEP_ADDRESS}#code`} target="_blank" rel="noreferrer">
+          Sweep contract
+        </a>
+        <a href={`${EXPLORER}/token/${USDT_ADDRESS}`} target="_blank" rel="noreferrer">
+          USDT
+        </a>
+      </footer>
+    </main>
+  );
+}

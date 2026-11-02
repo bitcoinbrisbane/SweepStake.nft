@@ -98,6 +98,21 @@ USDT=<address> ENTRIES_CLOSE=1793674800 forge script script/Deploy.s.sol ...
 
 The fees are set in `entryFees()` in the deploy script and can't be changed after deploying. USDT has 6 decimals, so 10 USDT = `10000000`. USDT also requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
 
+## Entry page
+
+`web/` is a React and Vite page where people pick a sweep, buy a ticket, see their NFTs and claim prizes or refunds. Owner actions aren't on it, so use the commands under [Race day](#race-day) for those.
+
+```sh
+cd web
+cp .env.example .env.local   # then set VITE_SWEEP_ADDRESS to the deployed contract
+yarn install
+yarn dev
+```
+
+`yarn build` writes a static site to `web/dist`, which can be hosted anywhere. The address is built into the page, so rebuild if it changes. Anyone with the link can enter, because the contract has no allowlist.
+
+It works with browser wallets only, so on a phone, open the page in your wallet app's browser. If the contract's ABI changes, run `forge build` and then `yarn sync-abi` in `web/`.
+
 ## Race day
 
 These are all owner calls. Add `--rpc-url $ETH_RPC_URL --account <keystore>` to each `cast send`.
