@@ -4,6 +4,16 @@
 
 An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in a USD stablecoin chosen at deployment. By default that's USDT on Ethereum mainnet.
 
+## Live
+
+| | |
+|---|---|
+| Entry page | https://sweepstake-6wo88.ondigitalocean.app |
+| Contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) |
+| Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
+
+Entries close at 2:50pm AEDT (1:50pm Brisbane) on 3 November 2026, and results can go in from 3:20pm AEDT (2:20pm Brisbane).
+
 ## How it works
 
 There are three sweeps on the one contract, so you can pick your stake. They all run on the same race, and each has its own pool and its own 24 tickets.
@@ -102,6 +112,8 @@ The betting currency is passed to the constructor. Use a USD stablecoin, because
 
 USDT requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value. The entry page handles that.
 
+If `--verify` fails on an older Foundry build, it's because Etherscan's current API needs a `chainid` that those builds drop. Run `foundryup`, or submit the source to `https://api.etherscan.io/v2/api?chainid=1` yourself. The contract is deployed either way.
+
 ### Testing on Base
 
 ```sh
@@ -115,7 +127,7 @@ forge script script/Deploy.s.sol --rpc-url https://mainnet.base.org --account <k
 cd web && VITE_CHAIN=base VITE_SWEEP_ADDRESS=<address> yarn dev
 ```
 
-On Base, `block.prevrandao` comes from Ethereum and stays the same across several blocks, so the draw's randomness is weaker. That's fine for a test.
+Etherscan's free API plan doesn't cover Base, so `--verify` needs a paid key there. On Base, `block.prevrandao` comes from Ethereum and stays the same across several blocks, so the draw's randomness is weaker. That's fine for a test.
 
 ## Entry page
 
