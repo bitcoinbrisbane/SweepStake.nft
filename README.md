@@ -23,9 +23,7 @@ There are three sweeps on the one contract, so you can pick your stake. They all
 
 Tickets are transferable ERC-721s, with their metadata and image stored onchain. The image shows the sweep, the horse and where the ticket stands, and it changes as the ticket's fortunes do.
 
-The art works like CryptoPunks: each runner is a 24x24 sprite of its horse and a jockey in its silks, kept in the contract (`src/HorseArt.sol`) and drawn as SVG on request. `horseImage(horse)` returns the art on its own, and `horseColours(horse)` the official description.
-
-The silks and coats are the real ones, from [Racing Australia's form guide](https://racingaustralia.horse/FreeFields/Form.aspx?Key=2026Nov03,VIC,Flemington), passed to the constructor by the deploy script. They're simplified to fit: a jacket is only 6 pixels square, so stars become spots and logos become blocks. The horses' faces are all drawn the same, so markings such as blazes aren't shown.
+The art works like CryptoPunks: each horse is a 24x24 sprite kept in the contract (`src/HorseArt.sol`) and drawn as SVG on request. A horse's coat and silks come from a hash of its name, so it looks the same in every sweep. **The silks are generated, not the horse's real racing colours.** `horseImage(horse)` returns a horse's art on its own.
 
 Whoever holds a ticket when claiming gets paid, so tickets can be sold or given away. If you're buying one, check `claimable(ticketId)` first, because a claimed ticket has nothing left to pay. The NFT stays with its holder after claiming, as a keepsake.
 

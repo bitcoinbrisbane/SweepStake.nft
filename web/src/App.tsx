@@ -136,7 +136,7 @@ function Sweepstake() {
         {account ? (
           <div className="wallet-chip">
             <span>{shortAddress(account)}</span>
-            {mine.data && wallet.onRightChain && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
+            {mine.data && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
             <button className="link-button" onClick={wallet.disconnect}>
               Disconnect
             </button>

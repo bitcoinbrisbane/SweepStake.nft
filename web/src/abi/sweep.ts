@@ -24,83 +24,9 @@ export const sweepAbi = [
         "internalType": "uint64"
       },
       {
-        "name": "field_",
-        "type": "tuple[]",
-        "internalType": "struct HorseArt.Runner[]",
-        "components": [
-          {
-            "name": "name",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "colours",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "look",
-            "type": "tuple",
-            "internalType": "struct HorseArt.Look",
-            "components": [
-              {
-                "name": "coat",
-                "type": "uint8",
-                "internalType": "uint8"
-              },
-              {
-                "name": "body",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "bodyAccent",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "centre",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "sleeve",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "sleeveAccent",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "cap",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "capAccent",
-                "type": "uint24",
-                "internalType": "uint24"
-              },
-              {
-                "name": "bodyMask",
-                "type": "uint40",
-                "internalType": "uint40"
-              },
-              {
-                "name": "sleeveMask",
-                "type": "uint16",
-                "internalType": "uint16"
-              },
-              {
-                "name": "capMask",
-                "type": "uint24",
-                "internalType": "uint24"
-              }
-            ]
-          }
-        ]
+        "name": "horses_",
+        "type": "string[]",
+        "internalType": "string[]"
       }
     ],
     "stateMutability": "nonpayable"
@@ -273,25 +199,6 @@ export const sweepAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "horseColours",
-    "inputs": [
-      {
-        "name": "horse",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "string",
-        "internalType": "string"
       }
     ],
     "stateMutability": "view"

@@ -50,8 +50,6 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     Sweep[] public sweeps;
     string[] private _horses;
-    string[] private _colours; // official description of each horse's silks
-    HorseArt.Look[] private _looks;
     mapping(uint256 => bool) public scratched; // horse index => scratched
     uint256 private _scratchedCount; // saves every entry reading each horse's flag
     mapping(uint256 => mapping(uint256 => uint256)) public horseTicket; // sweep => horse index => ticket id
@@ -88,12 +86,12 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         uint256[] memory entryFees,
         uint64 entriesClose_,
         uint64 resultsOpen_,
-        HorseArt.Runner[] memory field_
+        string[] memory horses_
     )
         ERC721("Melbourne Cup Sweep 2026", "CUP26")
         Ownable(msg.sender)
     {
-        uint256 horseTotal = field_.length;
+        uint256 horseTotal = horses_.length;
         uint256 sweepTotal = entryFees.length;
         if (horseTotal == 0 || horseTotal >= ID_BASE) revert BadHorse();
         if (sweepTotal == 0) revert BadSweep();
@@ -103,11 +101,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         resultsOpen = resultsOpen_;
         _self = address(this);
         _oneToken = uint256(10) ** IERC20Metadata(address(token_)).decimals();
-        for (uint256 i; i < horseTotal; ++i) {
-            _horses.push(field_[i].name);
-            _colours.push(field_[i].colours);
-            _looks.push(field_[i].look);
-        }
+        for (uint256 i; i < horseTotal; ++i) _horses.push(horses_[i]);
         for (uint256 i; i < sweepTotal; ++i) {
             if (entryFees[i] == 0) revert BadFee();
             sweeps.push(Sweep({entryFee: entryFees[i], state: State.Open, ticketCount: 0, winningTicket: 0}));
@@ -277,7 +271,6 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     function sweepCount() external view returns (uint256) { return sweeps.length; }
     function horseCount() external view returns (uint256) { return _horses.length; }
     function horseName(uint256 horse) external view returns (string memory) { return _horses[horse]; }
-    function horseColours(uint256 horse) external view returns (string memory) { return _colours[horse]; }
 
     /// @return sweepId the ticket's sweep
     /// @return holder current NFT owner
@@ -357,13 +350,13 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         return interfaceId == bytes4(0x49064906) || super.supportsInterface(interfaceId);
     }
 
-    /// @notice A horse and jockey's pixel art on its own, as a data URI. The art itself lives in this contract.
+    /// @notice A horse's pixel art on its own, as a data URI. The art itself lives in this contract.
     function horseImage(uint256 horse) external view returns (string memory) {
         if (horse >= _horses.length) revert BadHorse();
         return _svgDataUri(
             string.concat(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" shape-rendering="crispEdges">',
-                HorseArt.pixels(_looks[horse]),
+                HorseArt.pixels(_horses[horse]),
                 "</svg>"
             )
         );
@@ -420,16 +413,17 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     function _art(uint256 ticketId) private view returns (string memory) {
         uint16 h = _tickets[ticketId].horse;
         if (h == NONE) return HorseArt.silhouette();
-        string memory pixels = HorseArt.pixels(_looks[h - 1]);
+        string memory pixels = HorseArt.pixels(_horses[h - 1]);
         return scratched[h - 1] ? string.concat('<g opacity=".35">', pixels, "</g>") : pixels;
     }
 
     function _traits(uint256 ticketId) private view returns (string memory) {
         uint16 h = _tickets[ticketId].horse;
         if (h == NONE) return "";
+        string memory name = _horses[h - 1];
         return string.concat(
-            ',{"trait_type":"Coat","value":"', HorseArt.coatName(_looks[h - 1]),
-            '"},{"trait_type":"Silks","value":"', _colours[h - 1], '"}'
+            ',{"trait_type":"Coat","value":"', HorseArt.coatName(name),
+            '"},{"trait_type":"Silks","value":"', HorseArt.silksName(name), '"}'
         );
     }
 
