@@ -709,8 +709,13 @@ contract MelbourneCupSweepTest is Test {
         _fill(TEN, 4);
         string memory svg = _decode(vm.parseJsonString(_json(3001), ".image"), bytes("data:image/svg+xml;base64,").length);
         (,,, string memory name,) = sweep.ticket(3001);
-        assertTrue(_contains(svg, "NFT ticket #"));
         assertTrue(_contains(svg, name));
+        assertTrue(_contains(svg, "$10"));
+        assertTrue(_contains(svg, "#3001"));
+        assertFalse(_contains(svg, "Melbourne Cup"));
+        assertFalse(_contains(svg, "Saddlecloth"));
+        assertFalse(_contains(svg, "In the race"));
+        assertFalse(_contains(svg, "NFT ticket"));
         assertTrue(_contains(svg, "<rect x="));
         assertFalse(_contains(svg, 'opacity=".35"'));
 
@@ -831,8 +836,8 @@ contract MelbourneCupSweepTest is Test {
 
             string memory svg = _decode(vm.parseJsonString(json, ".image"), bytes("data:image/svg+xml;base64,").length);
             assertTrue(_contains(svg, horse));
-            assertTrue(_contains(svg, "In the race"));
             assertTrue(_contains(svg, "$10"));
+            assertTrue(_contains(svg, string.concat("#", vm.toString(t))));
         }
     }
 

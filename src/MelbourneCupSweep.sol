@@ -334,8 +334,8 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         uint256 sweepId;
         string fee; // such as $10
         string number; // the ticket's number within its sweep
+        string tokenId;
         string horse;
-        string cloth;
         string status;
     }
 
@@ -365,10 +365,9 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         card.sweepId = sweepId;
         card.fee = string.concat("$", Strings.toString(sweeps[sweepId].entryFee / _oneToken));
         card.number = Strings.toString(ticketId % ID_BASE);
+        card.tokenId = Strings.toString(ticketId);
         card.status = ticketStatus(ticketId);
-        uint16 h = _tickets[ticketId].horse;
-        card.horse = _horses[h - 1];
-        card.cloth = string.concat("Saddlecloth ", Strings.toString(h));
+        card.horse = _horses[_tickets[ticketId].horse - 1];
 
         return string.concat(
             "data:application/json;base64,",
@@ -423,23 +422,18 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         return string.concat(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#123326"/>'
             '<rect x="16" y="16" width="368" height="368" rx="18" fill="none" stroke-width="3" stroke="', colour,
-            '"/><rect x="116" y="60" width="168" height="168" fill="', tint,
-            '"/><g transform="translate(116 60) scale(7)" shape-rendering="crispEdges">', art, "</g>"
+            '"/><rect x="80" y="36" width="240" height="240" fill="', tint,
+            '"/><g transform="translate(80 36) scale(10)" shape-rendering="crispEdges">', art, "</g>"
         );
     }
 
+    /// @dev Just the horse, the fee and the token id. Where a ticket stands is in its metadata instead.
     function _svgText(Card memory card, string memory colour) private pure returns (string memory) {
-        string memory names = string.concat(
-            '<g font-family="Georgia,serif" text-anchor="middle" fill="#f5f0e1">'
-            '<text x="200" y="47" font-size="18" letter-spacing="1">Melbourne Cup 2026</text>'
-            '<text x="200" y="264" font-size="28" font-weight="bold">', card.horse,
-            '</text><text x="200" y="286" font-size="14">', card.cloth, "</text>"
-        );
         return string.concat(
-            names,
-            '<text x="200" y="326" font-size="17"><tspan font-size="30" font-weight="bold" fill="', colour, '">', card.fee,
-            "</tspan> NFT ticket #", card.number,
-            '</text><text x="200" y="358" font-size="16" fill="', colour, '">', card.status, "</text></g></svg>"
+            '<g font-family="Georgia,serif" text-anchor="middle" fill="#f5f0e1">'
+            '<text x="200" y="316" font-size="30" font-weight="bold">', card.horse,
+            '</text><text x="200" y="358" font-size="20"><tspan font-size="30" font-weight="bold" fill="', colour, '">', card.fee,
+            "</tspan> #", card.tokenId, "</text></g></svg>"
         );
     }
 }

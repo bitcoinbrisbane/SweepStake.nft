@@ -11,7 +11,7 @@ The contract is being replaced, and the replacement isn't on mainnet yet.
 | | |
 |---|---|
 | Entry page | https://sweepstake-6wo88.ondigitalocean.app says the sweep isn't open yet. Add `?testnet=true` to use the test contract |
-| Test contract, on Sepolia | [`0xd3c2Ba3e1aC1910EA8eF7DEE920f5cC6AC4d91C4`](https://sepolia.etherscan.io/address/0xd3c2Ba3e1aC1910EA8eF7DEE920f5cC6AC4d91C4#code) |
+| Test contract, on Sepolia | [`0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20`](https://sepolia.etherscan.io/address/0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20#code) |
 | Old contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) uses an earlier design. Don't enter it |
 | Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
 
@@ -33,7 +33,7 @@ Gas use depends on which horse comes out, so a purchase needs a margin over its 
 
 ### The NFT
 
-Tickets are transferable ERC-721s, with their metadata and image stored onchain. The image shows the sweep, the horse and where the ticket stands, and it changes as the ticket's fortunes do.
+Tickets are transferable ERC-721s, with their metadata and image stored onchain. The image shows just the horse, the fee and the token id, and fades if the horse is scratched. Where a ticket stands is in its metadata, and `ticketStatus(ticketId)` gives it in words.
 
 The art works like CryptoPunks: each horse is a 24x24 sprite kept in the contract (`src/HorseArt.sol`) and drawn as SVG on request. A horse's coat and silks come from a hash of its name, so it looks the same in every sweep. **The silks are generated, not the horse's real racing colours.** `horseImage(horse)` returns a horse's art on its own.
 
