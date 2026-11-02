@@ -2,6 +2,13 @@
 # Apply changes with: doctl --context block52 apps update <app-id> --spec .do/app.yaml
 name: sweepstake
 region: syd
+domains:
+  - domain: sweepstakenft.com
+    type: PRIMARY
+    zone: sweepstakenft.com
+  - domain: www.sweepstakenft.com
+    type: ALIAS
+    zone: sweepstakenft.com
 static_sites:
   - name: web
     git:

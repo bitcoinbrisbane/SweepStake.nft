@@ -8,7 +8,7 @@ An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington
 
 | | |
 |---|---|
-| Entry page | https://sweepstake-6wo88.ondigitalocean.app |
+| Entry page | https://sweepstakenft.com (also https://sweepstake-6wo88.ondigitalocean.app) |
 | Contract, on Ethereum mainnet | [`0x5a5f04760A99F0792C0a3ff0B5A14890c7292f07`](https://etherscan.io/address/0x5a5f04760A99F0792C0a3ff0B5A14890c7292f07#code) |
 | Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
 | Test version, on Sepolia | Add `?testnet=true` to the entry page. The contract is [`0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20`](https://sepolia.etherscan.io/address/0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20#code) |
@@ -165,7 +165,7 @@ It works with browser wallets, and with phone wallets such as Trust through Wall
 
 ### Hosting
 
-The page is on DigitalOcean App Platform, in the SweepStake project on the Block 52 team: https://sweepstake-6wo88.ondigitalocean.app
+The page is on DigitalOcean App Platform, in the SweepStake project on the Block 52 team, at https://sweepstakenft.com. DigitalOcean also hosts the domain's DNS, so GoDaddy's nameservers need to point at `ns1.digitalocean.com`, `ns2.digitalocean.com` and `ns3.digitalocean.com`. The address https://sweepstake-6wo88.ondigitalocean.app keeps working too.
 
 It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, and `VITE_CHAIN` if it isn't on mainnet, then apply it. `VITE_TESTNET_SWEEP_ADDRESS` is the test contract behind `?testnet=true`:
 
