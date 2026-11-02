@@ -154,7 +154,7 @@ It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy 
 doctl --context block52 apps update bca3bf67-c831-47a1-b3be-4cac0e29100f --spec .do/app.yaml
 ```
 
-To redeploy after pushing changes, run `doctl --context block52 apps create-deployment bca3bf67-c831-47a1-b3be-4cac0e29100f`. Always pass `--context block52`, because `doctl`'s default context may be a different team.
+To redeploy after pushing changes, run `doctl --context block52 apps create-deployment bca3bf67-c831-47a1-b3be-4cac0e29100f --force-rebuild`. Applying the spec alone can rebuild an older commit, so run this afterwards too if the code has changed. Always pass `--context block52`, because `doctl`'s default context may be a different team.
 
 ## Race day
 
