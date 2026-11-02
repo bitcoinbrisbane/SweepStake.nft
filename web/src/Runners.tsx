@@ -53,6 +53,7 @@ export function Runners({ overview, myTickets }: { overview: Overview; myTickets
                       {won && <span aria-label="Winner">🏆 </span>}
                       {runner.scratched ? <s>{runner.name}</s> : runner.name}
                       {runner.scratched && <small> Scratched</small>}
+                      <span className="runner-colours">{runner.colours}</span>
                     </span>
                   </div>
                 </td>

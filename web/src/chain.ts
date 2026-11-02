@@ -23,6 +23,7 @@ export type Runner = {
   index: number;
   number: number;
   name: string;
+  colours: string;
   image: string;
   scratched: boolean;
   /** The ticket holding this horse in each sweep, by sweep id. 0n if none. */
@@ -98,11 +99,12 @@ const loadField = once(async () => {
   return Promise.all(
     Array.from({ length: Number(count) }, async (_, index) => {
       const args = [BigInt(index)] as const;
-      const [name, image] = await Promise.all([
+      const [name, colours, image] = await Promise.all([
         publicClient.readContract({ ...sweep, functionName: "horseName", args }),
+        publicClient.readContract({ ...sweep, functionName: "horseColours", args }),
         publicClient.readContract({ ...sweep, functionName: "horseImage", args }),
       ]);
-      return { index, number: index + 1, name, image };
+      return { index, number: index + 1, name, colours, image };
     }),
   );
 });

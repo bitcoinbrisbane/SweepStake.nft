@@ -62,13 +62,22 @@ contract MelbourneCupSweepTest is Test {
         sweep = _deploy(_fourHorses());
     }
 
-    function _deploy(string[] memory horses) internal returns (MelbourneCupSweep) {
+    function _deploy(HorseArt.Runner[] memory horses) internal returns (MelbourneCupSweep) {
         return new MelbourneCupSweep(IERC20(address(usdt)), new Deploy().entryFees(6), close, results, horses);
     }
 
-    function _fourHorses() internal pure returns (string[] memory h) {
-        h = new string[](4);
-        h[0] = "Middle Earth"; h[1] = "Vauban"; h[2] = "Knight's Choice"; h[3] = "Zakouma";
+    function _fourHorses() internal pure returns (HorseArt.Runner[] memory h) {
+        h = new HorseArt.Runner[](4);
+        HorseArt.Look memory look;
+        look.coat = HorseArt.BAY;
+        look.body = 0x0a5fb4;
+        look.bodyAccent = 0xf8f8f8;
+        look.sleeve = 0x141414;
+        look.cap = 0xe8202a;
+        h[0] = HorseArt.Runner("Middle Earth", "Blue", look);
+        h[1] = HorseArt.Runner("Vauban", "Blue", look);
+        h[2] = HorseArt.Runner("Knight's Choice", "Blue", look);
+        h[3] = HorseArt.Runner("Zakouma", "Blue", look);
     }
 
     function _fee(uint256 id) internal view returns (uint256 fee) { (fee,,,) = sweep.sweeps(id); }
@@ -141,7 +150,7 @@ contract MelbourneCupSweepTest is Test {
     /// @dev Mainnet USDT's address has no code on Base, for example, so this stops a wrong-chain deploy.
     function test_constructor_rejectsAddressWithNoToken() public {
         uint256[] memory fees = new Deploy().entryFees(6);
-        string[] memory horses = _fourHorses();
+        HorseArt.Runner[] memory horses = _fourHorses();
         vm.expectRevert();
         new MelbourneCupSweep(IERC20(address(0xDEAD)), fees, close, results, horses);
     }
@@ -645,21 +654,40 @@ contract MelbourneCupSweepTest is Test {
     }
 
     function test_art_isStoredOnchain_andEveryRunnerLooksDifferent() public {
-        string[] memory field = new Deploy().field();
+        HorseArt.Runner[] memory field = new Deploy().field();
         sweep = _deploy(field);
         for (uint256 h; h < field.length; ++h) {
             string memory svg = _decode(sweep.horseImage(h), bytes("data:image/svg+xml;base64,").length);
             assertTrue(_contains(svg, "<rect "));
             assertTrue(_contains(svg, 'viewBox="0 0 24 24"'));
+            assertGt(bytes(sweep.horseColours(h)).length, 0);
             for (uint256 other; other < h; ++other) {
-                assertNotEq(
-                    string.concat(HorseArt.coatName(field[h]), HorseArt.silksName(field[h])),
-                    string.concat(HorseArt.coatName(field[other]), HorseArt.silksName(field[other]))
-                );
+                assertNotEq(keccak256(abi.encode(field[h].look)), keccak256(abi.encode(field[other].look)));
             }
         }
         vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
         sweep.horseImage(24);
+    }
+
+    /// @dev Spot checks against Racing Australia's form guide, in saddlecloth order.
+    function test_art_usesTheOfficialSilksAndCoats() public {
+        HorseArt.Runner[] memory field = new Deploy().field();
+        sweep = _deploy(field);
+        assertEq(sweep.horseName(0), "Sons And Lovers");
+        assertEq(sweep.horseColours(0), "White, Pink Star, Pink Cap, White Star");
+        assertEq(sweep.horseName(4), "Vauban");
+        assertEq(sweep.horseColours(4), "Royal Blue, White Horseshoe, Black And White Checked Sleeves And Cap");
+        assertEq(HorseArt.coatName(field[4].look), "Chestnut");
+        assertEq(sweep.horseName(20), "Strictly Business");
+        assertEq(sweep.horseColours(20), "Navy Blue, Gold Crowns");
+        assertEq(HorseArt.coatName(field[20].look), "Brown");
+        assertEq(sweep.horseName(23), "Shockletz");
+        assertEq(sweep.horseColours(23), "Black, Orange Checked Sash, Checked Cap");
+
+        string memory svg = _decode(sweep.horseImage(4), bytes("data:image/svg+xml;base64,").length);
+        assertTrue(_contains(svg, "#0a5fb4")); // royal blue jacket
+        assertTrue(_contains(svg, "#f8f8f8")); // white horseshoe
+        assertTrue(_contains(svg, "#a0522d")); // chestnut coat
     }
 
     function test_art_sameHorseLooksTheSameInEverySweep() public {
@@ -672,6 +700,7 @@ contract MelbourneCupSweepTest is Test {
         assertEq(vm.parseJsonString(one, ".attributes[4].trait_type"), "Silks");
         assertEq(vm.parseJsonString(one, ".attributes[3].value"), vm.parseJsonString(ten, ".attributes[3].value"));
         assertEq(vm.parseJsonString(one, ".attributes[4].value"), vm.parseJsonString(ten, ".attributes[4].value"));
+        assertEq(vm.parseJsonString(one, ".attributes[4].value"), "Blue");
     }
 
     function test_art_showsTheTicketsFortunes() public {

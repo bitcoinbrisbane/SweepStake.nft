@@ -26,6 +26,7 @@ const network: { chain: Chain; rpcs: string[] } | undefined = NETWORKS[import.me
 export const isConfigured = isAddress(configured) && network !== undefined;
 export const SWEEP_ADDRESS = isAddress(configured) ? getAddress(configured) : zeroAddress;
 export const CHAIN: Chain = (network ?? NETWORKS.mainnet).chain;
+export const IS_LOCAL = CHAIN.id === foundry.id;
 export const EXPLORER = CHAIN.blockExplorers?.default.url ?? "";
 
 /** 3 Nov 2026 3:00pm AEDT. The race time isn't onchain, only the close of entries and the results time are. */

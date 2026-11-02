@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import type { Address } from "viem";
 import { amountLabel, buyTicket, claimTicket, loadMine, loadOverview, type Progress, type Sweep, type Ticket } from "./chain";
-import { CHAIN, EXPLORER, isConfigured, RACE_START, SWEEP_ADDRESS } from "./config";
+import { CHAIN, EXPLORER, isConfigured, IS_LOCAL, RACE_START, SWEEP_ADDRESS } from "./config";
 import { friendlyError } from "./errors";
 import { MyTickets } from "./MyTickets";
 import { Runners } from "./Runners";
@@ -136,7 +136,7 @@ function Sweepstake() {
         {account ? (
           <div className="wallet-chip">
             <span>{shortAddress(account)}</span>
-            {mine.data && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
+            {mine.data && wallet.onRightChain && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
             <button className="link-button" onClick={wallet.disconnect}>
               Disconnect
             </button>
@@ -147,6 +147,13 @@ function Sweepstake() {
           </button>
         )}
       </header>
+
+      {IS_LOCAL && (
+        <p className="alert" role="note">
+          This is a local test chain. Balances here are test USDT, not your real funds, and nothing on this page can spend
+          real money.
+        </p>
+      )}
 
       {picker && !account && (
         <div className="picker" role="dialog" aria-label="Choose a wallet">

@@ -441,6 +441,13 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.runner-colours {
+  display: block;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
 .runner-name small {
   color: var(--bad);
 }
@@ -476,6 +483,10 @@ button:disabled {
   .runner-table th.runner-sweep,
   .runner-table td.runner-sweep {
     width: 40px;
+  }
+
+  .runner-colours {
+    font-size: 11px;
   }
 
   .runner-horse {
