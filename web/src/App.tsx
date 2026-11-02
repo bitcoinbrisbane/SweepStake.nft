@@ -6,12 +6,13 @@ import {
   fundLocalWallet,
   loadMine,
   loadOverview,
+  mintTestTokens,
   shortAddress,
   type Progress,
   type Sweep,
   type Ticket,
 } from "./chain";
-import { CHAIN, EXPLORER, isConfigured, IS_LOCAL, RACE_START, SWEEP_ADDRESS } from "./config";
+import { CHAIN, EXPLORER, isConfigured, IS_LOCAL, IS_TEST_MONEY, RACE_START, SWEEP_ADDRESS } from "./config";
 import { friendlyError } from "./errors";
 import { MyTickets } from "./MyTickets";
 import { Runners } from "./Runners";
@@ -27,10 +28,12 @@ export default function App() {
       <main className="page">
         <section className="notice">
           <h1>Melbourne Cup Sweep</h1>
-          <p>
-            This page isn't pointed at a contract yet. Set <code>VITE_SWEEP_ADDRESS</code> to the deployed address, and{" "}
-            <code>VITE_CHAIN</code> if it isn't on Ethereum, then rebuild.
-          </p>
+          <p>The sweep isn't open yet. Check back soon.</p>
+          {import.meta.env.DEV && (
+            <p className="muted">
+              Set <code>VITE_SWEEP_ADDRESS</code> to the deployed address, and <code>VITE_CHAIN</code> if it isn't on Ethereum.
+            </p>
+          )}
         </section>
       </main>
     );
@@ -114,13 +117,30 @@ function Sweepstake() {
     setSelectedSweep(target.id);
     setAction({ sweepId: target.id, progress: null });
     try {
-      await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
-      setSweepMessage({ sweepId: target.id, tone: "good", text: "You're in. Your NFT ticket is below." });
+      const horse = await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
+      const text = horse ? `You're in. You pulled ${horse} from the hat!` : "You're in. Your NFT ticket is below.";
+      setSweepMessage({ sweepId: target.id, tone: "good", text });
     } catch (err) {
       setSweepMessage({ sweepId: target.id, tone: "bad", text: friendlyError(err) });
     } finally {
       setAction(null);
       void overview.refresh();
+      void mine.refresh();
+    }
+  }
+
+  const [minting, setMinting] = useState(false);
+
+  async function getTestTokens() {
+    if (!wallet.client) return;
+    setWalletError(null);
+    setMinting(true);
+    try {
+      await mintTestTokens(wallet.client);
+    } catch (err) {
+      setWalletError(friendlyError(err));
+    } finally {
+      setMinting(false);
       void mine.refresh();
     }
   }
@@ -169,11 +189,19 @@ function Sweepstake() {
         )}
       </header>
 
-      {IS_LOCAL && (
-        <p className="alert" role="note">
-          This is a local test chain. Your wallet gets free test tUSDT here, which isn't your real balance, and nothing on
-          this page can spend real money.
-        </p>
+      {IS_TEST_MONEY && (
+        <div className="alert" role="note">
+          <span>
+            {IS_LOCAL
+              ? "This is a local test chain. Your wallet gets free test tUSDT here, which isn't your real balance, and nothing on this page can spend real money."
+              : `This is a test on ${CHAIN.name} using free test tUSDT, so nothing here is real money.`}
+          </span>
+          {!IS_LOCAL && wallet.client && (
+            <button className="ghost-button" disabled={minting} onClick={() => void getTestTokens()}>
+              {minting ? "Minting…" : "Get 100 test tUSDT"}
+            </button>
+          )}
+        </div>
       )}
 
       {picker && !account && (
@@ -222,21 +250,22 @@ function Sweepstake() {
         <h1>
           The Sweep <span className="hero-trophy" aria-hidden="true">🏆</span>
         </h1>
-        <p className="tagline">Pick your stake and buy an NFT ticket. Get a random horse. If it wins, you take the pool.</p>
+        <p className="tagline">Pick your stake and buy an NFT ticket. A random horse comes out of the hat. If it wins, you take the pool.</p>
         {winner ? (
           <p className="clock clock-winner">{winner} won the Cup</p>
         ) : data && !closed ? (
           <p className="clock">
             Entries close in <strong>{countdown(data.entriesClose - now)}</strong>
             <span className="clock-when">
-              {when(data.entriesClose)} · Race starts {when(RACE_START)}
+              {when(data.entriesClose)}
+              {!IS_TEST_MONEY && ` · Race starts ${when(RACE_START)}`}
             </span>
           </p>
         ) : data ? (
           <p className="clock">
             Entries are closed
             <span className="clock-when">
-              Race starts {when(RACE_START)} · Results from {when(data.resultsOpen)}
+              {!IS_TEST_MONEY && `Race starts ${when(RACE_START)} · `}Results from {when(data.resultsOpen)}
             </span>
           </p>
         ) : null}
@@ -284,7 +313,7 @@ function Sweepstake() {
         />
       )}
 
-      {data && <Runners overview={data} sweepId={selectedSweep} account={account} />}
+      {data && <Runners overview={data} sweepId={selectedSweep} account={account} closed={closed} />}
 
       <section className="how">
         <h2>How it works</h2>
@@ -296,20 +325,20 @@ function Sweepstake() {
             send or sell them too.
           </li>
           <li>
-            <strong>Get your horse.</strong> When entries close, every NFT ticket in a sweep gets a different random horse. It
-            shows up on your NFT, and in the runners above.
+            <strong>Get your horse.</strong> Your ticket pulls a random horse from that sweep's hat straight away, and each horse
+            only comes out once. It shows up on your NFT, and in the runners above.
           </li>
           <li>
             <strong>Watch the race.</strong> In each sweep, whoever holds the NFT with the winning horse claims that sweep's
             whole pool from this page.
           </li>
           <li>
-            <strong>Scratched?</strong> If your horse is scratched, or nobody in your sweep holds the winner, you can claim
-            your entry fee back here.
+            <strong>Scratched?</strong> If your horse is scratched, your entry fee comes straight back to your wallet. If nobody
+            in your sweep holds the winner, you can claim it back here.
           </li>
         </ol>
         <p className="muted">
-          Only the sweep's owner can run the draw and enter the result, so you're trusting them to do both fairly. If they
+          Only the sweep's owner can scratch a horse and enter the result, so you're trusting them to do both fairly. If they
           never enter a result, anyone can cancel a sweep a week after entries close, and its tickets get refunds.
         </p>
       </section>

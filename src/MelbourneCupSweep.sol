@@ -14,17 +14,18 @@ import {HorseArt} from "./HorseArt.sol";
 
 /// @title Melbourne Cup sweepstake
 /// @notice Several sweeps run on the same race, one per entry fee. Pick a sweep and pay its fee to
-///         mint an NFT ticket. When entries close, the owner draws each sweep: one shuffle gives
-///         every ticket in it a different horse. The NFT holding the winner takes that sweep's pool.
-/// @dev    Each sweep goes Open -> Drawn -> Settled, or Cancelled at any point before Settled.
-///         Horses and the race result are shared, so one scratch or settle applies to every sweep.
-///         Only the owner can draw, because the seed is known a block ahead: anyone able to call
-///         draw() could revert until they got the horse they wanted. A block proposer can still
-///         bias block.prevrandao slightly, which is fine for a sweep between mates.
+///         mint an NFT ticket, which pulls a random horse from that sweep's hat on the spot. Each
+///         horse only comes out once. The NFT holding the winner takes that sweep's pool.
+/// @dev    Each sweep goes Open -> Settled, or Cancelled at any point before Settled. Horses and
+///         the race result are shared, so one scratch or settle applies to every sweep.
+///         The randomness uses block.prevrandao, which is known a block ahead. Only wallets can
+///         enter, which stops a contract buying and reverting until it gets the horse it wants, but
+///         someone determined could still time a purchase to pick their horse. That's fine for a
+///         sweep between mates, not for large pools.
 contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     using SafeERC20 for IERC20;
 
-    enum State { Open, Drawn, Settled, Cancelled }
+    enum State { Open, Settled, Cancelled }
 
     struct Sweep {
         uint256 entryFee;
@@ -34,11 +35,10 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     }
 
     struct Ticket {
-        uint16 horse; // horse index + 1; 0 = no horse (not drawn yet, or the field ran out)
+        uint16 horse; // horse index + 1
         bool claimed;
     }
 
-    uint16 private constant NONE = 0;
     uint256 private constant ID_BASE = 1000; // ticket id = (sweep + 1) * 1000 + ticket number
     uint256 public constant SETTLE_GRACE = 7 days;
 
@@ -51,15 +51,15 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     Sweep[] public sweeps;
     string[] private _horses;
     mapping(uint256 => bool) public scratched; // horse index => scratched
-    uint256 private _scratchedCount; // saves every entry reading each horse's flag
     mapping(uint256 => mapping(uint256 => uint256)) public horseTicket; // sweep => horse index => ticket id
     mapping(uint256 => Ticket) private _tickets; // ticket id => ticket
+    mapping(uint256 => uint256) private _hatSize; // sweep => horses still in its hat
+    mapping(uint256 => mapping(uint256 => uint256)) private _hat; // sweep => position => horse index + 1, 0 = untouched
 
     bool public raceSettled;
     uint256 public winningHorse; // horse index, valid once raceSettled
 
     event Entered(uint256 indexed sweepId, uint256 indexed ticketId, address indexed holder);
-    event Drawn(uint256 indexed sweepId, uint256 seed);
     event HorseAssigned(uint256 indexed ticketId, uint256 indexed horse, string name);
     event Scratched(uint256 indexed horse);
     event Settled(uint256 indexed sweepId, uint256 indexed horse, uint256 indexed ticketId, address winner, uint256 prize);
@@ -68,9 +68,8 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     error WrongState();
     error EntriesClosed();
-    error EntriesStillOpen();
     error SweepFull();
-    error NoTickets();
+    error WalletsOnly();
     error BadHorse();
     error BadSweep();
     error BadFee();
@@ -105,78 +104,86 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         for (uint256 i; i < sweepTotal; ++i) {
             if (entryFees[i] == 0) revert BadFee();
             sweeps.push(Sweep({entryFee: entryFees[i], state: State.Open, ticketCount: 0, winningTicket: 0}));
+            _hatSize[i] = horseTotal;
         }
     }
 
     // ---------------------------------------------------------------- entering
 
-    /// @notice Buy one ticket in a sweep. Approve that sweep's fee first. You can buy several.
+    /// @notice Buy one ticket in a sweep, and pull a random horse from its hat. Approve that sweep's
+    ///         fee first. You can buy several.
     function enter(uint256 sweepId) external returns (uint256 ticketId) {
         Sweep storage s = _sweep(sweepId);
         if (s.state != State.Open) revert WrongState();
         if (block.timestamp >= entriesClose) revert EntriesClosed();
-        if (s.ticketCount >= activeHorses()) revert SweepFull();
+        if (msg.sender != tx.origin) revert WalletsOnly();
 
+        uint256 horse = _pullFromHat(sweepId);
         ticketId = _ticketId(sweepId, s.ticketCount);
         ++s.ticketCount;
+        _tickets[ticketId].horse = uint16(horse + 1);
+        horseTicket[sweepId][horse] = ticketId;
         _mint(msg.sender, ticketId);
         token.safeTransferFrom(msg.sender, _self, s.entryFee);
         emit Entered(sweepId, ticketId, msg.sender);
+        emit HorseAssigned(ticketId, horse, _horses[horse]);
     }
 
-    // ---------------------------------------------------------------- the draw
-
-    /// @notice Shuffle the field and give each ticket in a sweep a horse. Owner only. Allowed once
-    ///         entries close, or as soon as every horse in the sweep has a ticket.
-    function draw(uint256 sweepId) external onlyOwner {
-        Sweep storage s = _sweep(sweepId);
-        if (s.state != State.Open) revert WrongState();
-        uint256 n = s.ticketCount;
-        if (n == 0) revert NoTickets();
-        if (block.timestamp < entriesClose && n < activeHorses()) revert EntriesStillOpen();
-
-        (uint256[] memory pool, uint256 seed) = _shuffle(sweepId, n);
-
-        // If horses were scratched after people entered, the last tickets miss out and get refunds.
-        uint256 assigned = n < pool.length ? n : pool.length;
-        for (uint256 i; i < assigned; ++i) {
-            uint256 t = _ticketId(sweepId, i);
-            _tickets[t].horse = uint16(pool[i] + 1);
-            horseTicket[sweepId][pool[i]] = t;
-            emit HorseAssigned(t, pool[i], _horses[pool[i]]);
+    /// @dev A Fisher-Yates shuffle done one pull at a time. Each position starts out holding the
+    ///      horse with that index, and the last horse in the hat moves into the gap a pull leaves.
+    ///      A scratched horse that comes out is dropped, and the buyer pulls again.
+    function _pullFromHat(uint256 sweepId) private returns (uint256 horse) {
+        mapping(uint256 => uint256) storage hat = _hat[sweepId];
+        uint256 size = _hatSize[sweepId];
+        while (size != 0) {
+            uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, _self, msg.sender, sweepId, size)));
+            uint256 position = seed % size;
+            --size;
+            horse = _horseAt(hat, position);
+            hat[position] = _horseAt(hat, size) + 1;
+            if (!scratched[horse]) {
+                _hatSize[sweepId] = size;
+                return horse;
+            }
         }
-
-        s.state = State.Drawn;
-        emit Drawn(sweepId, seed);
-        emit BatchMetadataUpdate(0, type(uint256).max);
+        revert SweepFull();
     }
 
-    /// @dev Fisher-Yates shuffle of the horses still running.
-    function _shuffle(uint256 sweepId, uint256 n) private view returns (uint256[] memory pool, uint256 seed) {
-        pool = _activeHorseIndexes();
-        seed = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, _self, sweepId, n)));
-        for (uint256 i = pool.length; i > 1; --i) {
-            uint256 j = uint256(keccak256(abi.encode(seed, i))) % i;
-            (pool[i - 1], pool[j]) = (pool[j], pool[i - 1]);
-        }
+    function _horseAt(mapping(uint256 => uint256) storage hat, uint256 position) private view returns (uint256) {
+        uint256 stored = hat[position];
+        return stored == 0 ? position : stored - 1;
     }
 
     // ---------------------------------------------------------------- race day admin
 
-    /// @notice Mark a horse as scratched in every sweep. Tickets already holding it can claim a refund.
+    /// @notice Mark a horse as scratched in every sweep, and send the entry fee back to whoever holds
+    ///         it. If a payment can't go through, say the token has blocked the holder's address, the
+    ///         scratching still stands and that holder can claim the refund instead.
     function scratch(uint256 horse) external onlyOwner {
         if (raceSettled) revert WrongState();
         if (horse >= _horses.length || scratched[horse]) revert BadHorse();
         scratched[horse] = true;
-        ++_scratchedCount;
         emit Scratched(horse);
+        uint256 sweepTotal = sweeps.length;
+        for (uint256 id; id < sweepTotal; ++id) {
+            uint256 t = horseTicket[id][horse];
+            if (t != 0) _refund(t, sweeps[id].entryFee);
+        }
         emit BatchMetadataUpdate(0, type(uint256).max);
+    }
+
+    function _refund(uint256 ticketId, uint256 fee) private {
+        Ticket storage tk = _tickets[ticketId];
+        if (tk.claimed) return;
+        tk.claimed = true;
+        address holder = ownerOf(ticketId);
+        if (token.trySafeTransfer(holder, fee)) emit Claimed(ticketId, holder, fee);
+        else tk.claimed = false;
     }
 
     /// @notice Record the official winner (horse index) for every sweep at once. In each sweep the
     ///         holder of that horse takes the pool. A sweep where nobody holds it is cancelled and
-    ///         refunded. Reverts before resultsOpen, and if a sweep with tickets hasn't been drawn:
-    ///         draw or cancel it first.
+    ///         refunded. Reverts before resultsOpen.
     function settle(uint256 horse) external onlyOwner {
         if (raceSettled) revert WrongState();
         if (block.timestamp < resultsOpen) revert TooEarly();
@@ -188,7 +195,6 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         for (uint256 id; id < sweepTotal; ++id) {
             Sweep storage s = sweeps[id];
             if (s.state == State.Cancelled) continue;
-            if (s.state == State.Open && s.ticketCount != 0) revert WrongState();
 
             uint256 t = horseTicket[id][horse];
             if (t == 0) {
@@ -206,7 +212,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     ///         settling. Anyone can do it once the owner is a week late settling.
     function cancel(uint256 sweepId) external {
         Sweep storage s = _sweep(sweepId);
-        if (s.state != State.Open && s.state != State.Drawn) revert WrongState();
+        if (s.state != State.Open) revert WrongState();
         if (msg.sender != owner() && block.timestamp < uint256(entriesClose) + SETTLE_GRACE) revert TooEarly();
         _cancel(sweepId);
         emit BatchMetadataUpdate(0, type(uint256).max);
@@ -220,7 +226,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     // ---------------------------------------------------------------- claiming
 
     /// @notice Collect what a ticket is owed: the prize for the winning ticket, or the entry fee back
-    ///         if its sweep was cancelled, its horse was scratched, or it never got a horse.
+    ///         if its sweep was cancelled or its horse was scratched.
     ///         Whoever holds the NFT when claiming gets paid. The NFT stays with them as a keepsake.
     function claim(uint256 ticketId) external {
         if (ownerOf(ticketId) != msg.sender) revert NotYourTicket();
@@ -239,14 +245,12 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         if (tk.claimed) return 0;
         uint256 sweepId = _sweepOf(ticketId);
         Sweep storage s = sweeps[sweepId];
-        if (s.state == State.Cancelled) return s.entryFee;
-        if (s.state == State.Open) return 0;
-        if (_isRefundable(tk)) return s.entryFee;
+        if (s.state == State.Cancelled || scratched[tk.horse - 1]) return s.entryFee;
         if (s.state == State.Settled && s.winningTicket == ticketId) return prizePool(sweepId);
         return 0;
     }
 
-    /// @notice A sweep's pot: its entry fees, except those owed back to scratched or horseless tickets.
+    /// @notice A sweep's pot: its entry fees, except those owed back to tickets with scratched horses.
     ///         Tracked per sweep because all sweeps share the contract's balance, so tokens sent
     ///         straight to the contract joins no pool and can't be recovered.
     function prizePool(uint256 sweepId) public view returns (uint256) {
@@ -254,16 +258,10 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         if (s.state == State.Cancelled) return 0;
         uint256 ticketTotal = s.ticketCount;
         uint256 inPlay = ticketTotal;
-        if (s.state != State.Open) {
-            for (uint256 i; i < ticketTotal; ++i) {
-                if (_isRefundable(_tickets[_ticketId(sweepId, i)])) --inPlay;
-            }
+        for (uint256 i; i < ticketTotal; ++i) {
+            if (scratched[_tickets[_ticketId(sweepId, i)].horse - 1]) --inPlay;
         }
         return inPlay * s.entryFee;
-    }
-
-    function _isRefundable(Ticket storage tk) private view returns (bool) {
-        return tk.horse == NONE || scratched[tk.horse - 1];
     }
 
     // ---------------------------------------------------------------- views
@@ -274,8 +272,8 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     /// @return sweepId the ticket's sweep
     /// @return holder current NFT owner
-    /// @return horse horse index (type(uint256).max if none)
-    /// @return name horse name ("" if none)
+    /// @return horse horse index
+    /// @return name horse name
     /// @return claimed whether the ticket has been paid out
     function ticket(uint256 ticketId)
         external
@@ -286,12 +284,8 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         sweepId = _sweepOf(ticketId);
         Ticket storage tk = _tickets[ticketId];
         claimed = tk.claimed;
-        if (tk.horse == NONE) {
-            horse = type(uint256).max;
-        } else {
-            horse = tk.horse - 1;
-            name = _horses[horse];
-        }
+        horse = tk.horse - 1;
+        name = _horses[horse];
     }
 
     /// @notice Where a ticket stands, in words. Also shown on the NFT.
@@ -301,23 +295,22 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         Sweep storage s = sweeps[_sweepOf(ticketId)];
         bool won = s.state == State.Settled && s.winningTicket == ticketId;
         if (tk.claimed) return won ? "Winner - paid" : "Refunded";
-        if (s.state == State.Open) return "Awaiting the draw";
         if (s.state == State.Cancelled) return "Cancelled - refund available";
-        if (tk.horse == NONE) return "No horse - refund available";
         if (scratched[tk.horse - 1]) return "Scratched - refund available";
         if (won) return "Winner - prize to claim";
         return s.state == State.Settled ? "Did not win" : "In the race";
     }
 
-    function activeHorses() public view returns (uint256) {
-        return _horses.length - _scratchedCount;
+    function activeHorses() public view returns (uint256 count) {
+        uint256 horseTotal = _horses.length;
+        for (uint256 i; i < horseTotal; ++i) if (!scratched[i]) ++count;
     }
 
-    function _activeHorseIndexes() private view returns (uint256[] memory idx) {
-        idx = new uint256[](activeHorses());
-        uint256 k;
+    /// @notice How many more tickets a sweep can sell: the horses still running that nobody holds.
+    function availableHorses(uint256 sweepId) external view returns (uint256 count) {
+        _sweep(sweepId);
         uint256 horseTotal = _horses.length;
-        for (uint256 i; i < horseTotal; ++i) if (!scratched[i]) idx[k++] = i;
+        for (uint256 i; i < horseTotal; ++i) if (!scratched[i] && horseTicket[sweepId][i] == 0) ++count;
     }
 
     function _sweep(uint256 sweepId) private view returns (Sweep storage) {
@@ -373,7 +366,9 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         card.fee = string.concat("$", Strings.toString(sweeps[sweepId].entryFee / _oneToken));
         card.number = Strings.toString(ticketId % ID_BASE);
         card.status = ticketStatus(ticketId);
-        (card.horse, card.cloth) = _horseLabels(ticketId, sweepId);
+        uint16 h = _tickets[ticketId].horse;
+        card.horse = _horses[h - 1];
+        card.cloth = string.concat("Saddlecloth ", Strings.toString(h));
 
         return string.concat(
             "data:application/json;base64,",
@@ -403,24 +398,15 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         return string.concat("data:image/svg+xml;base64,", Base64.encode(bytes(svg)));
     }
 
-    function _horseLabels(uint256 ticketId, uint256 sweepId) private view returns (string memory horse, string memory cloth) {
-        uint16 h = _tickets[ticketId].horse;
-        if (h != NONE) return (_horses[h - 1], string.concat("Saddlecloth ", Strings.toString(h)));
-        return (sweeps[sweepId].state == State.Open ? "Horse to be drawn" : "No horse", "");
-    }
-
-    /// @dev The ticket's horse, faded if it was scratched, or a silhouette if it doesn't have one.
+    /// @dev The ticket's horse, faded if it was scratched.
     function _art(uint256 ticketId) private view returns (string memory) {
         uint16 h = _tickets[ticketId].horse;
-        if (h == NONE) return HorseArt.silhouette();
         string memory pixels = HorseArt.pixels(_horses[h - 1]);
         return scratched[h - 1] ? string.concat('<g opacity=".35">', pixels, "</g>") : pixels;
     }
 
     function _traits(uint256 ticketId) private view returns (string memory) {
-        uint16 h = _tickets[ticketId].horse;
-        if (h == NONE) return "";
-        string memory name = _horses[h - 1];
+        string memory name = _horses[_tickets[ticketId].horse - 1];
         return string.concat(
             ',{"trait_type":"Coat","value":"', HorseArt.coatName(name),
             '"},{"trait_type":"Silks","value":"', HorseArt.silksName(name), '"}'

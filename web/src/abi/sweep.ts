@@ -50,7 +50,7 @@ export const sweepAbi = [
     "inputs": [],
     "outputs": [
       {
-        "name": "",
+        "name": "count",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -74,6 +74,25 @@ export const sweepAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "availableHorses",
+    "inputs": [
+      {
+        "name": "sweepId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -138,19 +157,6 @@ export const sweepAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "draw",
-    "inputs": [
-      {
-        "name": "sweepId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -840,25 +846,6 @@ export const sweepAbi = [
   },
   {
     "type": "event",
-    "name": "Drawn",
-    "inputs": [
-      {
-        "name": "sweepId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "seed",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Entered",
     "inputs": [
       {
@@ -1144,16 +1131,6 @@ export const sweepAbi = [
   },
   {
     "type": "error",
-    "name": "EntriesStillOpen",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoTickets",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotYourTicket",
     "inputs": []
   },
@@ -1203,6 +1180,11 @@ export const sweepAbi = [
   {
     "type": "error",
     "name": "TooEarly",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WalletsOnly",
     "inputs": []
   },
   {

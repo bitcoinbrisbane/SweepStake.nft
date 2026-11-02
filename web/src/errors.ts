@@ -11,12 +11,13 @@ import { CHAIN } from "./config";
 const REVERTS: Record<string, string> = {
   EntriesClosed: "Entries have closed.",
   SweepFull: "That sweep has just sold out.",
+  WalletsOnly: "This sweep only takes ordinary wallets, not smart contract wallets.",
   WrongState: "That sweep isn't taking entries any more.",
   NothingToClaim: "There's nothing left to claim on this ticket.",
   NotYourTicket: "That ticket isn't in this wallet.",
 };
 
-const SWEEP_REFUSALS = new Set(["EntriesClosed", "SweepFull", "WrongState"]);
+const SWEEP_REFUSALS = new Set(["EntriesClosed", "SweepFull", "WrongState", "WalletsOnly"]);
 
 /**
  * True if the sweep itself refused an entry. Checking the name matters because tokens complain about a

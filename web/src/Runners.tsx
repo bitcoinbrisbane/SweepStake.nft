@@ -14,28 +14,27 @@ function Owner({ owner, account }: { owner: Address; account: Address | null }) 
   );
 }
 
-function note(sweep: Sweep) {
-  if (sweep.state === SweepState.Open) {
-    return "You buy an NFT ticket, not a horse. Each ticket gets a random horse when entries close, and this table fills in then.";
-  }
+function note(sweep: Sweep, closed: boolean) {
   if (sweep.state === SweepState.Cancelled) return "This sweep was cancelled, so its NFT tickets can claim a refund.";
-  return "Each row shows the NFT ticket holding that horse in this sweep, and who owns that NFT right now. A dash means nobody in this sweep drew it.";
+  const first = "Every NFT ticket pulls a random horse from the hat as soon as it's bought, and this shows who owns each one right now.";
+  return `${first} A dash means ${sweep.state === SweepState.Open && !closed ? "that horse is still in the hat" : "nobody in this sweep drew it"}.`;
 }
 
-/** Every horse, and who owns the NFT holding it in the chosen sweep. Horses are only handed out at the draw. */
+/** Every horse, and who owns the NFT holding it in the chosen sweep. It fills in as tickets sell. */
 export function Runners({
   overview,
   sweepId,
   account,
+  closed,
 }: {
   overview: Overview;
   sweepId: number;
   account: Address | null;
+  closed: boolean;
 }) {
   const { runners, token, winningHorse } = overview;
   const sweep = overview.sweeps[sweepId];
   const owners = new Map(sweep.tickets.map((t) => [t.id, t.owner]));
-  const undrawn = sweep.state === SweepState.Open;
   const style = { "--tier": TIER_COLOURS[sweep.id] ?? "var(--gold)" } as CSSProperties;
 
   return (
@@ -43,20 +42,7 @@ export function Runners({
       <h2>
         The runners <span className="runners-sweep">{feeLabel(sweep.fee, token)} sweep</span>
       </h2>
-      <p className="muted">{note(sweep)}</p>
-
-      {undrawn && sweep.tickets.length > 0 && (
-        <div className="sold">
-          <h3>NFT tickets sold so far</h3>
-          <ul>
-            {sweep.tickets.map((t) => (
-              <li key={t.id.toString()}>
-                #{ticketNumber(t.id)} <Owner owner={t.owner} account={account} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <p className="muted">{note(sweep, closed)}</p>
 
       <table className="runner-table">
         <thead>
@@ -88,8 +74,8 @@ export function Runners({
                     </span>
                   </div>
                 </td>
-                <td className="runner-ticket">{undrawn ? "·" : ticket ? `#${ticketNumber(ticket)}` : "–"}</td>
-                <td className="runner-owner">{owner ? <Owner owner={owner} account={account} /> : undrawn ? "·" : "–"}</td>
+                <td className="runner-ticket">{ticket ? `#${ticketNumber(ticket)}` : "–"}</td>
+                <td className="runner-owner">{owner ? <Owner owner={owner} account={account} /> : "–"}</td>
               </tr>
             );
           })}

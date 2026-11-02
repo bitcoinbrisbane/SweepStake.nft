@@ -31,7 +31,7 @@ contract MelbourneCupSweepForkTest is Test {
         (uint256 fee,,,) = sweep.sweeps(id);
         vm.store(address(USDT), keccak256(abi.encode(who, USDT_BALANCES_SLOT)), bytes32(fee));
         assertEq(USDT.balanceOf(who), fee);
-        vm.startPrank(who);
+        vm.startPrank(who, who);
         USDT.forceApprove(address(sweep), fee);
         ticketId = sweep.enter(id);
         vm.stopPrank();
@@ -55,18 +55,12 @@ contract MelbourneCupSweepForkTest is Test {
         assertGt(bytes(sweep.tokenURI(1001)).length, 0);
         assertEq(USDT.balanceOf(address(sweep)), 24e6 + 240e6 + 10e6);
 
-        vm.warp(close);
-        sweep.draw(0);
-        sweep.draw(1);
-        sweep.draw(2);
-
-        // A horse scratched after the draw refunds its ticket in each sweep that drew it.
+        // The field is fully sold in these two sweeps, so each has a ticket holding this horse. Its
+        // holder is paid back by the scratching itself, in real USDT.
         uint256 scratchedHorse = 4;
         sweep.scratch(scratchedHorse);
         uint256 refund1 = sweep.horseTicket(0, scratchedHorse);
         uint256 refund10 = sweep.horseTicket(2, scratchedHorse);
-        _claim(refund1);
-        _claim(refund10);
         assertEq(USDT.balanceOf(sweep.ownerOf(refund1)), 1e6);
         assertEq(USDT.balanceOf(sweep.ownerOf(refund10)), 10e6);
 
@@ -85,7 +79,7 @@ contract MelbourneCupSweepForkTest is Test {
         _claim(win10);
         assertEq(USDT.balanceOf(sweep.ownerOf(win1)), 23e6);
         assertEq(USDT.balanceOf(sweep.ownerOf(win10)), 230e6);
-        for (uint256 t = 2001; t <= 2005; ++t) _claim(t);
+        for (uint256 t = 2001; t <= 2005; ++t) if (sweep.claimable(t) != 0) _claim(t);
 
         // Every cent is accounted for, and the $2 tickets got their fee back.
         assertEq(USDT.balanceOf(address(sweep)), 0);

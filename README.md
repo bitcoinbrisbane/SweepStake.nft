@@ -4,15 +4,16 @@
 
 An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in a USD stablecoin chosen at deployment. By default that's USDT on Ethereum mainnet.
 
-## Live
+## Status
+
+The contract is being replaced, and the replacement isn't on mainnet yet.
 
 | | |
 |---|---|
-| Entry page | https://sweepstake-6wo88.ondigitalocean.app |
-| Contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) |
+| Entry page | https://sweepstake-6wo88.ondigitalocean.app says the sweep isn't open yet. Add `?testnet=true` to use the test contract |
+| Test contract, on Sepolia | [`0x6E6eCbEC6106d31b340a2Bea1c124b9b2f377bb6`](https://sepolia.etherscan.io/address/0x6E6eCbEC6106d31b340a2Bea1c124b9b2f377bb6#code) |
+| Old contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) uses an earlier design. Don't enter it |
 | Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
-
-Entries close at 2:50pm AEDT (1:50pm Brisbane) on 3 November 2026, and results can go in from 3:20pm AEDT (2:20pm Brisbane).
 
 ## How it works
 
@@ -24,10 +25,11 @@ There are three sweeps on the one contract, so you can pick your stake. They all
 | $2 | 1 | 2001–2024 | $48 |
 | $10 | 2 | 3001–3024 | $240 |
 
-1. **Enter.** Approve the sweep's fee, then call `enter(sweepId)`. Each call mints one NFT ticket, and you can buy more than one, in any sweep.
-2. **Draw.** When entries close, the owner calls `draw(sweepId)` for each sweep that has tickets. One shuffle gives every ticket in that sweep a different horse. If a sweep sells out, its draw can happen early.
-3. **Race.** After the race, the owner calls `settle(horse)` once. That one result covers every sweep, and the contract won't accept it before 3:20pm AEDT (2:20pm Brisbane), 20 minutes after the start.
-4. **Claim.** In each sweep, whoever holds the NFT with the winning horse calls `claim(ticketId)` and takes that sweep's pool.
+1. **Enter.** Approve the sweep's fee, then call `enter(sweepId)`. Each call mints one NFT ticket and pulls a random horse from that sweep's hat on the spot. Each horse only comes out once per sweep. You can buy more than one, in any sweep.
+2. **Race.** After the race, the owner calls `settle(horse)` once. That one result covers every sweep, and the contract won't accept it before 3:20pm AEDT (2:20pm Brisbane), 20 minutes after the start.
+3. **Claim.** In each sweep, whoever holds the NFT with the winning horse calls `claim(ticketId)` and takes that sweep's pool.
+
+Gas use depends on which horse comes out, so a purchase needs a margin over its estimate or it can run out of gas and fail. The entry page asks for half as much again, and unused gas is refunded.
 
 ### The NFT
 
@@ -42,21 +44,21 @@ Whoever holds a ticket when claiming gets paid, so tickets can be sold or given 
 | Situation | What happens |
 |---|---|
 | Nobody in a sweep holds the winning horse | That sweep is cancelled and its tickets claim their fee back. Other sweeps aren't affected |
-| A horse is scratched after the draw | The owner calls `scratch(horse)`, which applies to every sweep. Tickets holding that horse claim a refund and their pools shrink |
-| A horse is scratched before the draw, and the sweep was full | The last ticket bought misses out, and can claim a refund once the draw has happened |
-| A horse is scratched before the draw, and the sweep wasn't full | Nobody gets a refund. That horse just isn't drawn |
-| A sweep has tickets but hasn't been drawn | `settle` reverts until the owner draws or cancels that sweep |
+| A horse is scratched | The owner calls `scratch(horse)`, which applies to every sweep. It goes straight out of every hat, and anyone holding it is sent their entry fee back in the same transaction |
+| A scratching can't pay a holder, say the token has blocked their address | The scratching still stands, and that holder can call `claim(ticketId)` instead |
+| All of a sweep's horses are taken | `enter` reverts with `SweepFull` |
 | A sweep has no tickets | It's ignored, and marked cancelled at settlement |
+| A smart contract wallet tries to enter | `enter` reverts with `WalletsOnly`. See [Randomness](#randomness) |
 | The owner never settles | Anyone can call `cancel(sweepId)` a week after entries close, and that sweep's tickets get refunds |
-| Tokens are sent straight to the contract | It joins no pool and can't be recovered |
+| Tokens are sent straight to the contract | They join no pool and can't be recovered |
 
-Refunds and prizes are both collected with `claim(ticketId)`. `claimable(ticketId)` shows what a ticket is owed, and `ticketStatus(ticketId)` says where it stands.
+`claimable(ticketId)` shows what a ticket is owed, `ticketStatus(ticketId)` says where it stands, and `availableHorses(sweepId)` says how many more tickets a sweep can sell.
 
 ## Randomness
 
-The draw uses `block.prevrandao`, which is known a block ahead. That's why only the owner can draw: if anyone could, an entrant could draw from a contract that reverts unless they get the horse they want.
+The horse is picked at purchase from `block.prevrandao`, the block's timestamp and the buyer's address. Only wallets can enter, which stops a contract from buying and reverting until it gets the horse it wants.
 
-So you're trusting the owner not to do that, just as you're trusting them to settle the right winner. A validator proposing the draw block could also bias it. That's fine for a sweep between mates, but for a large pool, swap it for Chainlink VRF.
+That doesn't make it unbeatable. `block.prevrandao` is known a block ahead, so someone determined could work out which horse they'd get and time their purchase, and a validator could bias it. That's fine for a sweep between mates, but for a large pool, use Chainlink VRF.
 
 ## The field
 
@@ -114,6 +116,21 @@ USDT requires an existing allowance to be reset to 0 before it can be changed to
 
 If `--verify` fails on an older Foundry build, it's because Etherscan's current API needs a `chainid` that those builds drop. Run `foundryup`, or submit the source to `https://api.etherscan.io/v2/api?chainid=1` yourself. The contract is deployed either way.
 
+### Testing on Sepolia
+
+Real USDT isn't on Sepolia, so deploy the free test token first. Anyone can mint it, and the entry page has a button for that on test chains.
+
+```sh
+forge create test/mocks/TestUSDT.sol:TestUSDT --rpc-url <sepolia-rpc> --account <keystore> --broadcast
+
+# Sepolia currently charges far more gas for this deploy than Foundry simulates, about 33M against 5M,
+# so the multiplier is needed or it runs out of gas. Short times let you run the whole sweep.
+TOKEN=<test-token> ENTRIES_CLOSE=$(($(date +%s) + 1800)) RESULTS_OPEN=$(($(date +%s) + 2100)) \\
+forge script script/Deploy.s.sol --rpc-url <sepolia-rpc> --account <keystore> --broadcast --gas-estimate-multiplier 850
+```
+
+Set `VITE_TESTNET_SWEEP_ADDRESS` to the result, and `?testnet=true` on the page's URL switches to it. This tests how it behaves, but not what gas costs on mainnet.
+
 ### Testing on Base
 
 ```sh
@@ -131,7 +148,7 @@ Etherscan's free API plan doesn't cover Base, so `--verify` needs a paid key the
 
 ## Entry page
 
-`web/` is a React and Vite page where people pick a sweep, buy an NFT ticket, see the runners and their NFTs, and claim prizes or refunds. Owner actions aren't on it, so use the commands under [Race day](#race-day) for those.
+`web/` is a React and Vite page where people pick a sweep, buy an NFT ticket and see which horse comes out of the hat, watch the runners table fill up, and claim prizes or refunds. Owner actions aren't on it, so use the commands under [Race day](#race-day) for those.
 
 ```sh
 cd web
@@ -148,7 +165,7 @@ It works with browser wallets only, so on a phone, open the page in your wallet 
 
 The page is on DigitalOcean App Platform, in the SweepStake project on the Block 52 team: https://sweepstake-6wo88.ondigitalocean.app
 
-It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, and `VITE_CHAIN` if it isn't on mainnet, then apply it:
+It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, and `VITE_CHAIN` if it isn't on mainnet, then apply it. `VITE_TESTNET_SWEEP_ADDRESS` is the test contract behind `?testnet=true`:
 
 ```sh
 doctl --context block52 apps update bca3bf67-c831-47a1-b3be-4cac0e29100f --spec .do/app.yaml
@@ -161,15 +178,10 @@ To redeploy after pushing changes, run `doctl --context block52 apps create-depl
 These are all owner calls. Add `--rpc-url $ETH_RPC_URL --account <keystore>` to each `cast send`.
 
 ```sh
-# Morning: scratch any withdrawn horses. This can't be undone, so check the name first.
+# Scratchings close at 7:30am AEDT. Scratch any withdrawn horses. This sends their holders' money back
+# straight away and can't be undone, so check the name first.
 cast call $SWEEP "horseName(uint256)(string)" <index> --rpc-url $ETH_RPC_URL
 cast send $SWEEP "scratch(uint256)" <index>
-
-# 2:50pm AEDT (1:50pm Brisbane), entries close: draw each sweep with tickets straight away.
-# The race starts at 3:00pm AEDT (2:00pm Brisbane), and the contract can't stop a late draw.
-cast send $SWEEP "draw(uint256)" 0
-cast send $SWEEP "draw(uint256)" 1
-cast send $SWEEP "draw(uint256)" 2
 
 # From 3:20pm AEDT (2:20pm Brisbane), once the official result is in: check the name again.
 # This can't be undone either, and it reverts if you're early.

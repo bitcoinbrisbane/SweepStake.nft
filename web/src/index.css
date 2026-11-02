@@ -443,27 +443,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-.sold {
-  display: grid;
-  gap: 8px;
-}
-
-.sold h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.sold ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
 .runner-horse {
   display: flex;
   align-items: center;

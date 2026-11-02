@@ -1,4 +1,4 @@
-import { encodeFunctionData, formatUnits, parseAbi, type Account, type Address, type Chain, type Hash, type Transport, type WalletClient } from "viem";
+import { encodeFunctionData, formatUnits, parseAbi, parseEventLogs, type Account, type Address, type Chain, type Hash, type Transport, type WalletClient } from "viem";
 import { sweepAbi } from "./abi/sweep";
 import { tokenAbi } from "./abi/token";
 import { artClient, publicClient, SWEEP_ADDRESS } from "./config";
@@ -6,7 +6,7 @@ import { isSweepRevert } from "./errors";
 
 const sweep = { address: SWEEP_ADDRESS, abi: sweepAbi } as const;
 
-export const SweepState = { Open: 0, Drawn: 1, Settled: 2, Cancelled: 3 } as const;
+export const SweepState = { Open: 0, Settled: 1, Cancelled: 2 } as const;
 
 export type Token = { address: Address; symbol: string; decimals: number };
 
@@ -17,6 +17,8 @@ export type Sweep = {
   ticketCount: number;
   winningTicket: bigint;
   pool: bigint;
+  /** How many more tickets it can sell: the horses still in its hat that are running. */
+  available: number;
   /** Every ticket sold in this sweep, and who owns that NFT right now. */
   tickets: { id: bigint; owner: Address }[];
 };
@@ -35,7 +37,6 @@ export type Overview = {
   token: Token;
   entriesClose: number;
   resultsOpen: number;
-  activeHorses: number;
   winningHorse: number | null;
   sweeps: Sweep[];
   runners: Runner[];
@@ -116,9 +117,10 @@ async function loadSweeps(): Promise<Sweep[]> {
   return Promise.all(
     Array.from({ length: Number(count) }, async (_, id) => {
       const args = [BigInt(id)] as const;
-      const [[fee, state, ticketCount, winningTicket], pool] = await Promise.all([
+      const [[fee, state, ticketCount, winningTicket], pool, available] = await Promise.all([
         publicClient.readContract({ ...sweep, functionName: "sweeps", args }),
         publicClient.readContract({ ...sweep, functionName: "prizePool", args }),
+        publicClient.readContract({ ...sweep, functionName: "availableHorses", args }),
       ]);
       const tickets = await Promise.all(
         Array.from({ length: ticketCount }, async (_, i) => {
@@ -127,7 +129,7 @@ async function loadSweeps(): Promise<Sweep[]> {
           return { id: ticket, owner };
         }),
       );
-      return { id, fee, state, ticketCount, winningTicket, pool, tickets };
+      return { id, fee, state, ticketCount, winningTicket, pool, available: Number(available), tickets };
     }),
   );
 }
@@ -141,10 +143,7 @@ async function loadRunners(sweeps: Sweep[]): Promise<Runner[]> {
         publicClient.readContract({ ...sweep, functionName: "scratched", args: [index] }),
         Promise.all(
           sweeps.map((s) =>
-            // Nobody holds a horse until their sweep is drawn, so skip the read until then.
-            s.state === SweepState.Open
-              ? 0n
-              : publicClient.readContract({ ...sweep, functionName: "horseTicket", args: [BigInt(s.id), index] }),
+            publicClient.readContract({ ...sweep, functionName: "horseTicket", args: [BigInt(s.id), index] }),
           ),
         ),
       ]);
@@ -154,11 +153,10 @@ async function loadRunners(sweeps: Sweep[]): Promise<Runner[]> {
 }
 
 export async function loadOverview(): Promise<Overview> {
-  const [token, entriesClose, resultsOpen, activeHorses, raceSettled, winningHorse, sweeps] = await Promise.all([
+  const [token, entriesClose, resultsOpen, raceSettled, winningHorse, sweeps] = await Promise.all([
     loadToken(),
     publicClient.readContract({ ...sweep, functionName: "entriesClose" }),
     publicClient.readContract({ ...sweep, functionName: "resultsOpen" }),
-    publicClient.readContract({ ...sweep, functionName: "activeHorses" }),
     publicClient.readContract({ ...sweep, functionName: "raceSettled" }),
     publicClient.readContract({ ...sweep, functionName: "winningHorse" }),
     loadSweeps(),
@@ -167,7 +165,6 @@ export async function loadOverview(): Promise<Overview> {
     token,
     entriesClose: Number(entriesClose),
     resultsOpen: Number(resultsOpen),
-    activeHorses: Number(activeHorses),
     winningHorse: raceSettled ? Number(winningHorse) : null,
     sweeps,
     runners: await loadRunners(sweeps),
@@ -264,6 +261,7 @@ const readAllowance = (token: Token, owner: Address) =>
 async function confirmed(hash: Hash) {
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("That transaction failed on the network.");
+  return receipt;
 }
 
 /** Public RPCs can lag behind the block we just saw, and the next step's simulation needs this to be visible. */
@@ -303,7 +301,7 @@ const simulateEnter = (wallet: Wallet, target: Sweep) =>
   });
 
 /**
- * Buys one ticket, approving the token first if needed. USDT refuses to change one non-zero allowance
+ * Buys one ticket, returning the horse it pulled from the hat. Approves the token first if needed. USDT refuses to change one non-zero allowance
  * straight to another, so a smaller leftover approval has to be cleared first. An approval that's
  * already big enough, such as from an attempt abandoned part way, is reused.
  */
@@ -334,9 +332,32 @@ export async function buyTicket(wallet: Wallet, target: Sweep, onProgress: (p: P
   const report = reporter("Buy your NFT ticket");
   report("wallet");
   const { request } = await simulateEnter(wallet, target);
-  const hash = await wallet.writeContract(request);
+  // Gas use depends on which horse comes out of the hat, so an exact estimate can run out and fail.
+  // Asking for half as much again covers that, and whatever isn't used is refunded.
+  const estimate = await publicClient.estimateContractGas({
+    ...sweep,
+    functionName: "enter",
+    args: [BigInt(target.id)],
+    account: wallet.account,
+  });
+  const hash = await wallet.writeContract({ ...request, gas: (estimate * 3n) / 2n });
   report("network", hash);
-  await confirmed(hash);
+  const receipt = await confirmed(hash);
+  const [pulled] = parseEventLogs({ abi: sweepAbi, logs: receipt.logs, eventName: "HorseAssigned" });
+  return pulled?.args.name ?? null;
+}
+
+/** Test chains only: mints free test tokens to the connected wallet, which pays its own gas. */
+export async function mintTestTokens(wallet: Wallet) {
+  const token = await loadToken();
+  const { request } = await publicClient.simulateContract({
+    address: token.address,
+    abi: parseAbi(["function mint(address to, uint256 amount)"]),
+    functionName: "mint",
+    args: [wallet.account.address, 100n * 10n ** BigInt(token.decimals)],
+    account: wallet.account,
+  });
+  await confirmed(await wallet.writeContract(request));
 }
 
 export async function claimTicket(wallet: Wallet, id: bigint, onProgress: (p: Progress) => void) {

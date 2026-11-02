@@ -32,7 +32,6 @@ function outcome(sweep: Sweep, token: Token): string {
   if (sweep.state === SweepState.Cancelled) {
     return sweep.ticketCount ? "Cancelled. Tickets can claim a refund." : "No entries";
   }
-  if (sweep.state === SweepState.Drawn) return "Drawn. Every NFT ticket has its horse.";
   return "";
 }
 
@@ -57,8 +56,8 @@ export function SweepCard(props: {
   const { sweep, selected, onSelect, overview, closed, wallet, mine, busy, active, progress, message, onBuy, onConnect, onSwitch } =
     props;
   const { token } = overview;
-  const capacity = Math.max(overview.activeHorses, sweep.ticketCount);
-  const full = sweep.ticketCount >= overview.activeHorses;
+  const capacity = sweep.ticketCount + sweep.available;
+  const full = sweep.available === 0;
   const open = sweep.state === SweepState.Open && !closed && !full;
 
   function button(): ButtonState | null {

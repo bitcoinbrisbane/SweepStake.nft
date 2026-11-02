@@ -16,7 +16,7 @@ library HorseArt {
         uint8 pattern;
     }
 
-    /// @dev What each sprite character is drawn in. A silhouette sets them all to one colour.
+    /// @dev What each sprite character is drawn in.
     struct Palette {
         uint256 outline;
         uint256 main;
@@ -35,7 +35,6 @@ library HorseArt {
     uint256 private constant OUTLINE = 0x1c1410;
     uint256 private constant WHITE = 0xf5f5f0;
     uint256 private constant EYE = 0x000000;
-    uint256 private constant SILHOUETTE = 0x3f4f47;
 
     uint256 private constant COAT_COUNT = 4;
     uint256 private constant SILK_COUNT = 12;
@@ -111,24 +110,6 @@ library HorseArt {
         p.secondary = _colour(silks, look.secondary);
         p.pattern = look.pattern;
         return _rects(p);
-    }
-
-    /// @notice A dark outline of a horse, for a ticket that has no horse yet.
-    function silhouette() internal pure returns (string memory) {
-        return _rects(
-            Palette({
-                outline: SILHOUETTE,
-                main: SILHOUETTE,
-                shade: SILHOUETTE,
-                mane: SILHOUETTE,
-                blaze: SILHOUETTE,
-                white: SILHOUETTE,
-                eye: SILHOUETTE,
-                primary: SILHOUETTE,
-                secondary: SILHOUETTE,
-                pattern: PLAIN
-            })
-        );
     }
 
     function coatName(string memory name) internal pure returns (string memory) {
