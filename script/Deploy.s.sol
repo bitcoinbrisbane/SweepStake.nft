@@ -9,25 +9,33 @@ import {MelbourneCupSweep} from "../src/MelbourneCupSweep.sol";
 ///
 ///   forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 ///
+/// Runs three sweeps on the one contract: sweep 0 = 1 USDT, sweep 1 = 2 USDT, sweep 2 = 10 USDT.
+///
 /// Optional env overrides:
 ///   USDT            token address        (default: Ethereum mainnet USDT)
-///   ENTRY_FEE       in token base units  (default: 10 USDT = 10_000_000)
 ///   ENTRIES_CLOSE   unix seconds         (default: 1793674800 = 3 Nov 2026 2:00pm AEDT, 1:00pm Brisbane)
 contract Deploy is Script {
     address constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
     function run() external returns (MelbourneCupSweep sweep) {
         address usdt = vm.envOr("USDT", MAINNET_USDT);
-        uint256 fee = vm.envOr("ENTRY_FEE", uint256(10e6));
         uint64 close = uint64(vm.envOr("ENTRIES_CLOSE", uint256(1793674800)));
 
         vm.startBroadcast();
-        sweep = new MelbourneCupSweep(IERC20(usdt), fee, close, field());
+        sweep = new MelbourneCupSweep(IERC20(usdt), entryFees(), close, field());
         vm.stopBroadcast();
 
         console.log("MelbourneCupSweep:", address(sweep));
-        console.log("Entry fee:", fee);
+        console.log("Sweeps:", sweep.sweepCount());
         console.log("Entries close:", close);
+    }
+
+    /// @dev USDT has 6 decimals. Array position = sweep id.
+    function entryFees() public pure returns (uint256[] memory f) {
+        f = new uint256[](3);
+        f[0] = 1e6;
+        f[1] = 2e6;
+        f[2] = 10e6;
     }
 
     /// @dev 2026 final field in saddlecloth order. Horse index = saddlecloth number - 1.

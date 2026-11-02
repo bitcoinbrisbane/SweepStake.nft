@@ -3,7 +3,11 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC4906} from "@openzeppelin/contracts/interfaces/IERC4906.sol";
+import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MelbourneCupSweep} from "../src/MelbourneCupSweep.sol";
+import {Deploy} from "../script/Deploy.s.sol";
 
 /// @dev Mimics mainnet USDT: 6 decimals and transfer/transferFrom/approve return nothing.
 contract MockUSDT {
@@ -19,169 +23,707 @@ contract MockUSDT {
     }
 }
 
+/// @dev The attack that owner-only draw() closes: draw, then revert unless you got the horse you want.
+contract Grinder {
+    function grind(MelbourneCupSweep s, uint256 sweepId, uint256 ticketId, uint256 want) external {
+        s.draw(sweepId);
+        (,, uint256 horse,,) = s.ticket(ticketId);
+        require(horse == want, "not my horse");
+    }
+}
+
 contract MelbourneCupSweepTest is Test {
+    uint256 constant ONE = 0; // sweep ids
+    uint256 constant TWO = 1;
+    uint256 constant TEN = 2;
+    uint256 constant NO_HORSE = type(uint256).max;
+
     MockUSDT usdt;
     MelbourneCupSweep sweep;
-    uint256 constant FEE = 10e6; // 10 USDT
     uint64 close;
 
     function setUp() public {
         usdt = new MockUSDT();
         close = uint64(block.timestamp + 1 days);
-        string[] memory horses = new string[](4);
-        horses[0] = "Middle Earth"; horses[1] = "Vauban"; horses[2] = "Asterix"; horses[3] = "Zakouma";
-        sweep = new MelbourneCupSweep(IERC20(address(usdt)), FEE, close, horses);
+        sweep = _deploy(_fourHorses());
     }
 
-    function _enter(address who) internal returns (uint256 id) {
-        usdt.mint(who, FEE);
+    function _deploy(string[] memory horses) internal returns (MelbourneCupSweep) {
+        return new MelbourneCupSweep(IERC20(address(usdt)), new Deploy().entryFees(), close, horses);
+    }
+
+    function _fourHorses() internal pure returns (string[] memory h) {
+        h = new string[](4);
+        h[0] = "Middle Earth"; h[1] = "Vauban"; h[2] = "Knight's Choice"; h[3] = "Zakouma";
+    }
+
+    function _fee(uint256 id) internal view returns (uint256 fee) { (fee,,,) = sweep.sweeps(id); }
+    function _state(uint256 id) internal view returns (MelbourneCupSweep.State st) { (, st,,) = sweep.sweeps(id); }
+    function _horseOf(uint256 ticketId) internal view returns (uint256 h) { (,, h,,) = sweep.ticket(ticketId); }
+
+    function _enter(address who, uint256 id) internal returns (uint256 ticketId) {
+        uint256 fee = _fee(id);
+        usdt.mint(who, fee);
         vm.startPrank(who);
-        usdt.approve(address(sweep), FEE);
-        id = sweep.enter();
+        usdt.approve(address(sweep), fee);
+        ticketId = sweep.enter(id);
         vm.stopPrank();
     }
 
-    function _horseOf(uint256 id) internal view returns (uint256 h) { (, h,,) = sweep.ticket(id); }
-
-    function test_fullFlow_winnerTakesPool() public {
-        address[3] memory p = [address(0xA), address(0xB), address(0xC)];
-        for (uint256 i; i < 3; ++i) _enter(p[i]);
-        assertEq(usdt.balanceOf(address(sweep)), 30e6);
-
-        vm.warp(close);
-        vm.prevrandao(bytes32(uint256(42)));
-        sweep.draw();
-
-        // Every ticket got a different, valid horse.
-        bool[4] memory seen;
-        for (uint256 i; i < 3; ++i) { uint256 h = _horseOf(i); assertLt(h, 4); assertFalse(seen[h]); seen[h] = true; }
-
-        uint256 winHorse = _horseOf(1);
-        sweep.settle(winHorse);
-        assertEq(sweep.claimable(1), 30e6);
-        assertEq(sweep.claimable(0), 0);
-
-        vm.prank(p[1]);
-        sweep.claim(1);
-        assertEq(usdt.balanceOf(p[1]), 30e6);
-        assertEq(sweep.claimable(1), 0);
+    /// @dev Each sweep gets its own set of wallets, so balances are easy to check.
+    function _fill(uint256 id, uint256 n) internal {
+        for (uint256 i; i < n; ++i) _enter(address(uint160((id + 1) * 100 + i)), id);
     }
 
-    function test_unownedWinner_refundsEveryone() public {
-        _enter(address(0xA)); _enter(address(0xB));
-        vm.warp(close);
-        sweep.draw();
-        uint256 unowned;
-        for (uint256 h; h < 4; ++h) if (sweep.horseTicket(h) == 0) { unowned = h; break; }
-        sweep.settle(unowned);
-        assertEq(uint256(sweep.state()), uint256(MelbourneCupSweep.State.Cancelled));
-        vm.prank(address(0xA)); sweep.claim(0);
-        assertEq(usdt.balanceOf(address(0xA)), FEE);
+    function _claim(uint256 ticketId) internal {
+        vm.prank(sweep.ownerOf(ticketId));
+        sweep.claim(ticketId);
     }
 
-    function test_scratchAfterDraw_refundsThatTicket_andShrinksPool() public {
-        _enter(address(0xA)); _enter(address(0xB)); _enter(address(0xC));
-        vm.warp(close);
-        sweep.draw();
-        sweep.scratch(_horseOf(0));
-        assertEq(sweep.claimable(0), FEE);
-        assertEq(sweep.prizePool(), 20e6);
-
-        vm.prank(address(0xA)); sweep.claim(0);
-        sweep.settle(_horseOf(2));
-        assertEq(sweep.claimable(2), 20e6);
-        vm.prank(address(0xC)); sweep.claim(2);
-        assertEq(usdt.balanceOf(address(sweep)), 0);
+    function _balanceOfHolder(uint256 ticketId) internal view returns (uint256) {
+        return usdt.balanceOf(sweep.ownerOf(ticketId));
     }
 
-    function test_scratchBeforeDraw_extraTicketRefunded() public {
-        for (uint160 i = 1; i <= 4; ++i) _enter(address(i));
-        sweep.scratch(3);
-        vm.warp(close);
-        sweep.draw();
-        uint256 horseless;
-        for (uint256 t; t < 4; ++t) if (_horseOf(t) == type(uint256).max) ++horseless;
-        assertEq(horseless, 1);
-        assertEq(sweep.prizePool(), 30e6);
+    // ---------------------------------------------------------------- picking a sweep
+
+    function test_threeSweeps_chargeTheirOwnFee() public {
+        assertEq(sweep.sweepCount(), 3);
+        address buyer = address(0xA);
+        assertEq(_enter(buyer, ONE), 1001);
+        assertEq(usdt.balanceOf(address(sweep)), 1e6);
+        assertEq(_enter(buyer, TWO), 2001);
+        assertEq(usdt.balanceOf(address(sweep)), 3e6);
+        assertEq(_enter(buyer, TEN), 3001);
+        assertEq(usdt.balanceOf(address(sweep)), 13e6);
+
+        assertEq(usdt.balanceOf(buyer), 0);
+        assertEq(sweep.prizePool(ONE), 1e6);
+        assertEq(sweep.prizePool(TWO), 2e6);
+        assertEq(sweep.prizePool(TEN), 10e6);
     }
 
-    function test_fullSweep_canDrawEarly_andRejectsMore() public {
-        for (uint160 i = 1; i <= 4; ++i) _enter(address(i));
-        usdt.mint(address(5), FEE);
+    function test_enter_rejectsUnknownSweep() public {
+        vm.expectRevert(MelbourneCupSweep.BadSweep.selector);
+        sweep.enter(3);
+    }
+
+    function test_constructor_rejectsBadFees() public {
+        uint256[] memory none = new uint256[](0);
+        vm.expectRevert(MelbourneCupSweep.BadSweep.selector);
+        new MelbourneCupSweep(IERC20(address(usdt)), none, close, _fourHorses());
+
+        uint256[] memory zero = new uint256[](1);
+        vm.expectRevert(MelbourneCupSweep.BadFee.selector);
+        new MelbourneCupSweep(IERC20(address(usdt)), zero, close, _fourHorses());
+    }
+
+    function test_sweepsFillIndependently() public {
+        _fill(ONE, 4);
+        usdt.mint(address(5), 1e6);
         vm.startPrank(address(5));
-        usdt.approve(address(sweep), FEE);
+        usdt.approve(address(sweep), 1e6);
         vm.expectRevert(MelbourneCupSweep.SweepFull.selector);
-        sweep.enter();
+        sweep.enter(ONE);
         vm.stopPrank();
-        sweep.draw(); // before close, allowed because full
+        assertEq(_enter(address(5), TWO), 2001);
     }
 
-    function test_cannotDrawEarlyUnlessFull() public {
-        _enter(address(0xA));
-        vm.expectRevert(MelbourneCupSweep.EntriesStillOpen.selector);
-        sweep.draw();
+    function test_oneWalletCanBuySeveral() public {
+        address buyer = address(0xA);
+        _enter(buyer, TEN); _enter(buyer, TEN); _enter(buyer, ONE);
+        assertEq(sweep.balanceOf(buyer), 3);
+        assertEq(sweep.ownerOf(3002), buyer);
     }
 
     function test_cannotEnterAfterClose() public {
         vm.warp(close);
-        usdt.mint(address(0xA), FEE);
+        usdt.mint(address(0xA), 1e6);
         vm.startPrank(address(0xA));
-        usdt.approve(address(sweep), FEE);
+        usdt.approve(address(sweep), 1e6);
         vm.expectRevert(MelbourneCupSweep.EntriesClosed.selector);
-        sweep.enter();
+        sweep.enter(ONE);
         vm.stopPrank();
     }
 
-    function test_entryFee_changeableOnlyBeforeEntries() public {
-        sweep.setEntryFee(5e6);
-        assertEq(sweep.entryFee(), 5e6);
-        usdt.mint(address(0xA), 5e6);
-        vm.startPrank(address(0xA)); usdt.approve(address(sweep), 5e6); sweep.enter(); vm.stopPrank();
-        vm.expectRevert(MelbourneCupSweep.FeeLocked.selector);
-        sweep.setEntryFee(1e6);
+    // ---------------------------------------------------------------- settling
+
+    function test_oneRaceResult_paysEachSweepItsOwnPool() public {
+        _fill(ONE, 4); _fill(TWO, 4); _fill(TEN, 4);
+        assertEq(usdt.balanceOf(address(sweep)), 52e6);
+        vm.warp(close);
+        vm.prevrandao(bytes32(uint256(42)));
+        sweep.draw(ONE); sweep.draw(TWO); sweep.draw(TEN);
+
+        sweep.settle(1);
+        assertTrue(sweep.raceSettled());
+        assertEq(sweep.winningHorse(), 1);
+
+        uint256[3] memory pools = [uint256(4e6), 8e6, 40e6];
+        for (uint256 id; id < 3; ++id) {
+            uint256 winner = sweep.horseTicket(id, 1);
+            assertEq(uint256(_state(id)), uint256(MelbourneCupSweep.State.Settled));
+            assertEq(sweep.claimable(winner), pools[id]);
+            _claim(winner);
+            assertEq(_balanceOfHolder(winner), pools[id]);
+            assertEq(sweep.claimable(winner), 0);
+        }
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    function test_losingTicketsGetNothing() public {
+        _fill(TEN, 4);
+        sweep.draw(TEN);
+        vm.warp(close);
+        sweep.settle(0);
+        uint256 winner = sweep.horseTicket(TEN, 0);
+        for (uint256 t = 3001; t <= 3004; ++t) {
+            if (t == winner) continue;
+            assertEq(sweep.claimable(t), 0);
+            vm.prank(sweep.ownerOf(t));
+            vm.expectRevert(MelbourneCupSweep.NothingToClaim.selector);
+            sweep.claim(t);
+        }
+    }
+
+    function test_nobodyHoldsWinner_refundsOnlyThatSweep() public {
+        _fill(ONE, 1); _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(ONE); sweep.draw(TEN);
+
+        uint256 unowned;
+        for (uint256 h; h < 4; ++h) if (sweep.horseTicket(ONE, h) == 0) { unowned = h; break; }
+        sweep.settle(unowned);
+
+        assertEq(uint256(_state(ONE)), uint256(MelbourneCupSweep.State.Cancelled));
+        assertEq(uint256(_state(TWO)), uint256(MelbourneCupSweep.State.Cancelled)); // empty
+        assertEq(uint256(_state(TEN)), uint256(MelbourneCupSweep.State.Settled));
+
+        _claim(1001);
+        assertEq(_balanceOfHolder(1001), 1e6);
+        uint256 winner = sweep.horseTicket(TEN, unowned);
+        _claim(winner);
+        assertEq(_balanceOfHolder(winner), 40e6);
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    function test_settle_blockedUntilEverySweepWithTicketsIsDrawn() public {
+        _fill(ONE, 4); _fill(TEN, 1);
+        vm.warp(close);
+        sweep.draw(ONE);
+
+        vm.expectRevert(MelbourneCupSweep.WrongState.selector);
+        sweep.settle(0);
+        assertFalse(sweep.raceSettled());
+
+        sweep.cancel(TEN);
+        sweep.settle(0);
+        assertTrue(sweep.raceSettled());
+        _claim(3001);
+        assertEq(_balanceOfHolder(3001), 10e6);
+    }
+
+    /// @dev The test field has few enough horses to hide a bad bounds check, so use the real one.
+    function test_everyHorseInTheFieldCanWin() public {
+        sweep = _deploy(new Deploy().field());
+        _fill(TEN, 1);
+        vm.warp(close);
+        sweep.draw(TEN);
+        for (uint256 h; h < 24; ++h) {
+            uint256 snapshot = vm.snapshotState();
+            sweep.settle(h);
+            assertEq(sweep.winningHorse(), h);
+            vm.revertToState(snapshot);
+        }
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.settle(24);
+    }
+
+    function test_settle_onlyOnce() public {
+        _fill(ONE, 4);
+        vm.warp(close);
+        sweep.draw(ONE);
+        sweep.settle(0);
+        vm.expectRevert(MelbourneCupSweep.WrongState.selector);
+        sweep.settle(1);
+        assertEq(sweep.winningHorse(), 0);
+    }
+
+    function test_settle_notBeforeEntriesClose() public {
+        _fill(ONE, 4);
+        sweep.draw(ONE); // full, so it can draw early
+        vm.expectRevert(MelbourneCupSweep.EntriesStillOpen.selector);
+        sweep.settle(0);
     }
 
     function test_onlyOwnerSettlesAndScratches() public {
-        _enter(address(0xA));
+        _fill(ONE, 1);
         vm.warp(close);
-        sweep.draw();
+        sweep.draw(ONE);
         vm.startPrank(address(0xBAD));
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(0xBAD)));
         sweep.settle(0);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(0xBAD)));
         sweep.scratch(0);
         vm.stopPrank();
     }
 
-    function test_anyoneCanCancel_ifOwnerLate() public {
-        _enter(address(0xA));
+    // ---------------------------------------------------------------- the draw
+
+    function test_onlyOwnerCanDraw() public {
+        _fill(ONE, 1);
         vm.warp(close);
-        sweep.draw();
-        vm.prank(address(0xA));
+        vm.prank(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(0xBAD)));
+        sweep.draw(ONE);
+        sweep.draw(ONE);
+        assertEq(uint256(_state(ONE)), uint256(MelbourneCupSweep.State.Drawn));
+    }
+
+    function test_entrantCannotGrindTheDraw() public {
+        _fill(TEN, 4); // full, so the draw is open as soon as the last ticket sells
+        Grinder g = new Grinder();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(g)));
+        g.grind(sweep, TEN, 3004, 0);
+        assertEq(uint256(_state(TEN)), uint256(MelbourneCupSweep.State.Open));
+    }
+
+    function test_cannotDrawEarlyUnlessFull() public {
+        _fill(ONE, 3);
+        vm.expectRevert(MelbourneCupSweep.EntriesStillOpen.selector);
+        sweep.draw(ONE);
+        _fill(TWO, 4);
+        sweep.draw(TWO); // this one is full
+    }
+
+    function test_cannotDrawEmptySweepOrDrawTwice() public {
+        _fill(TWO, 1);
+        vm.warp(close);
+        vm.expectRevert(MelbourneCupSweep.NoTickets.selector);
+        sweep.draw(ONE);
+
+        sweep.draw(TWO);
+        vm.expectRevert(MelbourneCupSweep.WrongState.selector);
+        sweep.draw(TWO);
+    }
+
+    function test_sweepsDrawnInOneBlock_getDifferentShuffles() public {
+        sweep = _deploy(new Deploy().field());
+        _fill(ONE, 24); _fill(TEN, 24);
+        sweep.draw(ONE); sweep.draw(TEN);
+        bool differ;
+        for (uint256 i = 1; i <= 24; ++i) {
+            if (_horseOf(1000 + i) != _horseOf(3000 + i)) differ = true;
+        }
+        assertTrue(differ);
+    }
+
+    function testFuzz_drawAssignsUniqueHorses(bytes32 rand, uint8 entrants, uint8 id) public {
+        uint256 sweepId = bound(id, 0, 2);
+        uint256 n = bound(entrants, 1, 4);
+        _fill(sweepId, n);
+        vm.warp(close);
+        vm.prevrandao(rand);
+        sweep.draw(sweepId);
+        bool[4] memory seen;
+        for (uint256 i = 1; i <= n; ++i) {
+            uint256 h = _horseOf((sweepId + 1) * 1000 + i);
+            assertFalse(seen[h]);
+            seen[h] = true;
+        }
+    }
+
+    // ---------------------------------------------------------------- scratchings and refunds
+
+    function test_scratchAfterDraw_refundsTheHolderInEverySweep() public {
+        _fill(ONE, 4); _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(ONE); sweep.draw(TEN);
+
+        sweep.scratch(1);
+        uint256 r1 = sweep.horseTicket(ONE, 1);
+        uint256 r10 = sweep.horseTicket(TEN, 1);
+        assertEq(sweep.claimable(r1), 1e6);
+        assertEq(sweep.claimable(r10), 10e6);
+        assertEq(sweep.prizePool(ONE), 3e6);
+        assertEq(sweep.prizePool(TEN), 30e6);
+
+        _claim(r1); _claim(r10);
+        assertEq(_balanceOfHolder(r1), 1e6);
+        assertEq(_balanceOfHolder(r10), 10e6);
+
+        sweep.settle(0);
+        uint256 w1 = sweep.horseTicket(ONE, 0);
+        uint256 w10 = sweep.horseTicket(TEN, 0);
+        _claim(w1); _claim(w10);
+        assertEq(_balanceOfHolder(w1), 3e6);
+        assertEq(_balanceOfHolder(w10), 30e6);
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    function test_winnerClaimsFirst_lateRefundsStillPay() public {
+        _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(TEN);
+        sweep.scratch(1); sweep.scratch(2);
+        sweep.settle(0);
+
+        uint256 winner = sweep.horseTicket(TEN, 0);
+        _claim(winner);
+        assertEq(_balanceOfHolder(winner), 20e6);
+
+        uint256 r1 = sweep.horseTicket(TEN, 1);
+        uint256 r2 = sweep.horseTicket(TEN, 2);
+        assertEq(sweep.claimable(r1), 10e6);
+        _claim(r1); _claim(r2);
+        assertEq(_balanceOfHolder(r1), 10e6);
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    function test_fullSweep_scratchBeforeDraw_lastTicketRefundedAfterDraw() public {
+        _fill(TEN, 4);
+        sweep.scratch(3);
+        assertEq(sweep.claimable(3004), 0); // nothing until the draw
+        sweep.draw(TEN);
+
+        assertEq(_horseOf(3004), NO_HORSE);
+        assertEq(sweep.claimable(3004), 10e6);
+        assertEq(sweep.prizePool(TEN), 30e6);
+        assertEq(sweep.horseTicket(TEN, 3), 0);
+        _claim(3004);
+        assertEq(_balanceOfHolder(3004), 10e6);
+    }
+
+    function test_notFull_scratchBeforeDraw_nobodyRefunded_horseNeverDrawn() public {
+        _fill(TEN, 3);
+        sweep.scratch(3);
+        vm.warp(close);
+        sweep.draw(TEN);
+        assertEq(sweep.horseTicket(TEN, 3), 0);
+        for (uint256 t = 3001; t <= 3003; ++t) {
+            assertLt(_horseOf(t), 3);
+            assertEq(sweep.claimable(t), 0);
+        }
+        assertEq(sweep.prizePool(TEN), 30e6);
+    }
+
+    function test_scratch_shrinksEverySweepsCapacity() public {
+        sweep.scratch(0);
+        assertEq(sweep.activeHorses(), 3);
+        _fill(TWO, 3);
+        sweep.draw(TWO); // three tickets is now full
+    }
+
+    function test_activeHorses_countsEachScratchOnce() public {
+        assertEq(sweep.activeHorses(), 4);
+        sweep.scratch(2);
+        assertEq(sweep.activeHorses(), 3);
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.scratch(2);
+        assertEq(sweep.activeHorses(), 3);
+        sweep.scratch(0); sweep.scratch(1); sweep.scratch(3);
+        assertEq(sweep.activeHorses(), 0);
+    }
+
+    function test_cancelAfterRefund_everyoneWhole() public {
+        _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(TEN);
+        sweep.scratch(0);
+        uint256 refunded = sweep.horseTicket(TEN, 0);
+        _claim(refunded);
+        sweep.cancel(TEN);
+        assertEq(sweep.claimable(refunded), 0);
+        for (uint256 t = 3001; t <= 3004; ++t) if (t != refunded) _claim(t);
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    function test_scratchGuards() public {
+        _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(TEN);
+        sweep.scratch(0);
+        uint256 refunded = sweep.horseTicket(TEN, 0);
+        uint256 other = sweep.horseTicket(TEN, 1);
+        address holder = sweep.ownerOf(refunded);
+        address stranger = sweep.ownerOf(other);
+
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.scratch(0); // already scratched
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.scratch(4); // no such horse
+
+        vm.prank(stranger);
+        vm.expectRevert(MelbourneCupSweep.NotYourTicket.selector);
+        sweep.claim(refunded);
+
+        vm.prank(holder);
+        sweep.claim(refunded);
+        vm.prank(holder);
+        vm.expectRevert(MelbourneCupSweep.NothingToClaim.selector);
+        sweep.claim(refunded); // no double refund
+
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.settle(0); // a scratched horse can't win
+
+        sweep.settle(1);
+        vm.expectRevert(MelbourneCupSweep.WrongState.selector);
+        sweep.scratch(2); // nothing after settling
+    }
+
+    /// @dev Whatever happens, what tickets can claim equals what the contract holds, and paying
+    ///      them all empties it. The sweeps share one balance, so a slip here takes another's money.
+    function testFuzz_moneyAlwaysAddsUp(bytes32 rand, uint8 a, uint8 b, uint8 c, uint8 scratches, uint8 winner) public {
+        uint256[3] memory n = [bound(a, 0, 4), bound(b, 0, 4), bound(c, 0, 4)];
+        for (uint256 id; id < 3; ++id) _fill(id, n[id]);
+
+        for (uint256 h; h < 4; ++h) if (uint256(scratches) >> h & 1 == 1) sweep.scratch(h); // before the draw
+        vm.warp(close);
+        vm.prevrandao(rand);
+        for (uint256 id; id < 3; ++id) if (n[id] != 0) sweep.draw(id);
+        for (uint256 h; h < 4; ++h) {
+            if (uint256(scratches) >> (h + 4) & 1 == 1 && !sweep.scratched(h)) sweep.scratch(h); // after it
+        }
+
+        uint256 running;
+        for (uint256 h; h < 4; ++h) if (!sweep.scratched(h)) ++running;
+        assertEq(sweep.activeHorses(), running);
+
+        // Settle on the first horse still running, if any are.
+        for (uint256 i; i < 4; ++i) {
+            uint256 h = (uint256(winner) + i) % 4;
+            if (!sweep.scratched(h)) { sweep.settle(h); break; }
+        }
+
+        uint256 owed;
+        for (uint256 id; id < 3; ++id) {
+            for (uint256 i = 1; i <= n[id]; ++i) owed += sweep.claimable((id + 1) * 1000 + i);
+        }
+        assertEq(owed, usdt.balanceOf(address(sweep)));
+
+        for (uint256 id; id < 3; ++id) {
+            for (uint256 i = 1; i <= n[id]; ++i) {
+                uint256 t = (id + 1) * 1000 + i;
+                if (sweep.claimable(t) != 0) _claim(t);
+            }
+        }
+        assertEq(usdt.balanceOf(address(sweep)), 0);
+    }
+
+    // ---------------------------------------------------------------- cancelling
+
+    function test_ownerCancelsOneSweepOnly() public {
+        _fill(ONE, 1); _fill(TEN, 1);
+        sweep.cancel(ONE);
+        assertEq(uint256(_state(ONE)), uint256(MelbourneCupSweep.State.Cancelled));
+        assertEq(uint256(_state(TEN)), uint256(MelbourneCupSweep.State.Open));
+        assertEq(sweep.claimable(1001), 1e6);
+        assertEq(sweep.claimable(3001), 0);
+    }
+
+    function test_anyoneCanCancel_ifOwnerLate() public {
+        _fill(TEN, 1);
+        vm.warp(close);
+        sweep.draw(TEN);
+        address holder = sweep.ownerOf(3001);
+
+        vm.prank(holder);
         vm.expectRevert(MelbourneCupSweep.TooEarly.selector);
-        sweep.cancel();
+        sweep.cancel(TEN);
+
         vm.warp(uint256(close) + 7 days);
-        vm.prank(address(0xA));
-        sweep.cancel();
-        vm.prank(address(0xA)); sweep.claim(0);
-        assertEq(usdt.balanceOf(address(0xA)), FEE);
+        vm.prank(holder);
+        sweep.cancel(TEN);
+        _claim(3001);
+        assertEq(usdt.balanceOf(holder), 10e6);
+    }
+
+    // ---------------------------------------------------------------- the NFT
+
+    function test_isAnERC721WithMetadataUpdates() public view {
+        assertEq(sweep.name(), "Melbourne Cup Sweep 2026");
+        assertEq(sweep.symbol(), "CUP26");
+        assertTrue(sweep.supportsInterface(0x80ac58cd)); // ERC-721
+        assertTrue(sweep.supportsInterface(0x5b5e139f)); // ERC-721 metadata
+        assertTrue(sweep.supportsInterface(0x49064906)); // ERC-4906
+        assertFalse(sweep.supportsInterface(0xffffffff));
+    }
+
+    function test_soldTicket_newHolderClaimsPrize() public {
+        _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(TEN);
+        sweep.settle(0);
+        uint256 winner = sweep.horseTicket(TEN, 0);
+        address seller = sweep.ownerOf(winner);
+        address buyer = address(0xB0B);
+        vm.prank(seller);
+        sweep.transferFrom(seller, buyer, winner);
+
+        vm.prank(seller);
+        vm.expectRevert(MelbourneCupSweep.NotYourTicket.selector);
+        sweep.claim(winner);
+
+        vm.prank(buyer);
+        sweep.claim(winner);
+        assertEq(usdt.balanceOf(buyer), 40e6);
+        assertEq(usdt.balanceOf(seller), 0);
+    }
+
+    function test_soldTicket_newHolderGetsRefund() public {
+        _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(TEN);
+        sweep.scratch(0);
+        uint256 t = sweep.horseTicket(TEN, 0);
+        address seller = sweep.ownerOf(t);
+        address buyer = address(0xB0B);
+        vm.prank(seller);
+        sweep.transferFrom(seller, buyer, t);
+        vm.prank(buyer);
+        sweep.claim(t);
+        assertEq(usdt.balanceOf(buyer), 10e6);
+    }
+
+    function test_nftStaysAfterClaim() public {
+        _fill(TEN, 1);
+        address holder = sweep.ownerOf(3001);
+        sweep.cancel(TEN);
+        _claim(3001);
+        assertEq(sweep.ownerOf(3001), holder);
+    }
+
+    function test_unknownTicketsRevert() public {
+        bytes memory err = abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, uint256(1001));
+        vm.expectRevert(err);
+        sweep.claim(1001);
+        vm.expectRevert(err);
+        sweep.claimable(1001);
+        vm.expectRevert(err);
+        sweep.tokenURI(1001);
+        vm.expectRevert(err);
+        sweep.ticket(1001);
     }
 
     function test_cannotClaimSomeoneElsesTicket() public {
-        _enter(address(0xA));
-        sweep.cancel();
+        _fill(TEN, 1);
+        sweep.cancel(TEN);
         vm.prank(address(0xB));
         vm.expectRevert(MelbourneCupSweep.NotYourTicket.selector);
-        sweep.claim(0);
+        sweep.claim(3001);
     }
 
-    function testFuzz_drawAssignsUniqueHorses(bytes32 rand, uint8 entrants) public {
-        uint256 n = bound(entrants, 1, 4);
-        for (uint160 i = 1; i <= n; ++i) _enter(address(i));
+    function test_metadataRefreshIsSignalled() public {
+        _fill(TEN, 4);
+        vm.expectEmit();
+        emit IERC4906.BatchMetadataUpdate(0, type(uint256).max);
+        sweep.draw(TEN);
+
+        vm.expectEmit();
+        emit IERC4906.BatchMetadataUpdate(0, type(uint256).max);
+        sweep.scratch(0);
+
         vm.warp(close);
-        vm.prevrandao(rand);
-        sweep.draw();
-        bool[4] memory seen;
-        for (uint256 t; t < n; ++t) { uint256 h = _horseOf(t); assertFalse(seen[h]); seen[h] = true; }
+        vm.expectEmit();
+        emit IERC4906.BatchMetadataUpdate(0, type(uint256).max);
+        sweep.settle(1);
+
+        uint256 winner = sweep.horseTicket(TEN, 1);
+        address holder = sweep.ownerOf(winner);
+        vm.expectEmit();
+        emit IERC4906.MetadataUpdate(winner);
+        vm.prank(holder);
+        sweep.claim(winner);
+    }
+
+    function test_statusFollowsTheTicket() public {
+        _fill(TEN, 4);
+        assertEq(sweep.ticketStatus(3001), "Awaiting the draw");
+        vm.warp(close);
+        sweep.draw(TEN);
+        assertEq(sweep.ticketStatus(3001), "In the race");
+
+        sweep.scratch(0);
+        uint256 scratchedTicket = sweep.horseTicket(TEN, 0);
+        assertEq(sweep.ticketStatus(scratchedTicket), "Scratched - refund available");
+        _claim(scratchedTicket);
+        assertEq(sweep.ticketStatus(scratchedTicket), "Refunded");
+
+        sweep.settle(1);
+        uint256 winner = sweep.horseTicket(TEN, 1);
+        uint256 loser = sweep.horseTicket(TEN, 2);
+        assertEq(sweep.ticketStatus(winner), "Winner - prize to claim");
+        assertEq(sweep.ticketStatus(loser), "Did not win");
+        _claim(winner);
+        assertEq(sweep.ticketStatus(winner), "Winner - paid");
+    }
+
+    function test_statusForCancelledAndHorseless() public {
+        _fill(TEN, 4);
+        sweep.scratch(3);
+        sweep.draw(TEN);
+        assertEq(sweep.ticketStatus(3004), "No horse - refund available");
+
+        _fill(ONE, 1);
+        sweep.cancel(ONE);
+        assertEq(sweep.ticketStatus(1001), "Cancelled - refund available");
+    }
+
+    function test_tokenURI_beforeTheDraw() public {
+        _fill(TWO, 1);
+        string memory json = _json(2001);
+        assertEq(vm.parseJsonString(json, ".name"), "Melbourne Cup 2026 $2 Sweep #1");
+        assertEq(vm.parseJsonString(json, ".attributes[0].value"), "$2");
+        assertEq(vm.parseJsonString(json, ".attributes[1].value"), "Horse to be drawn");
+        assertEq(vm.parseJsonString(json, ".attributes[2].value"), "Awaiting the draw");
+    }
+
+    function test_tokenURI_showsHorseAndStatus_forEveryHorse() public {
+        _fill(TEN, 4); // the field includes an apostrophe, in Knight's Choice
+        vm.warp(close);
+        sweep.draw(TEN);
+        for (uint256 t = 3001; t <= 3004; ++t) {
+            string memory json = _json(t);
+            (,,, string memory horse,) = sweep.ticket(t);
+            assertEq(vm.parseJsonString(json, ".attributes[0].value"), "$10");
+            assertEq(vm.parseJsonString(json, ".attributes[1].value"), horse);
+            assertEq(vm.parseJsonString(json, ".attributes[2].value"), "In the race");
+
+            string memory svg = _decode(vm.parseJsonString(json, ".image"), bytes("data:image/svg+xml;base64,").length);
+            assertTrue(_contains(svg, horse));
+            assertTrue(_contains(svg, "In the race"));
+            assertTrue(_contains(svg, "$10"));
+        }
+    }
+
+    function _json(uint256 ticketId) internal view returns (string memory) {
+        return _decode(sweep.tokenURI(ticketId), bytes("data:application/json;base64,").length);
+    }
+
+    function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
+        return vm.indexOf(haystack, needle) != type(uint256).max;
+    }
+
+    /// @dev Base64 decoder, to read the data URIs back.
+    function _decode(string memory uri, uint256 skip) internal pure returns (string memory) {
+        bytes memory b = bytes(uri);
+        bytes memory out = new bytes((b.length - skip) / 4 * 3);
+        uint256 o; uint256 buf; uint256 bits;
+        for (uint256 i = skip; i < b.length; ++i) {
+            bytes1 c = b[i];
+            if (c == "=") break;
+            uint256 v = c >= "A" && c <= "Z" ? uint8(c) - 65
+                : c >= "a" && c <= "z" ? uint8(c) - 71
+                : c >= "0" && c <= "9" ? uint8(c) + 4
+                : c == "+" ? 62 : 63;
+            buf = (buf << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out[o++] = bytes1(uint8(buf >> bits));
+                buf &= (1 << bits) - 1;
+            }
+        }
+        assembly { mstore(out, o) }
+        return string(out);
     }
 }

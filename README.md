@@ -6,24 +6,45 @@ An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington
 
 ## How it works
 
-1. **Enter.** Approve the entry fee (10 USDT by default), then call `enter()`. Each call buys one ticket, and you can buy more than one. There are as many tickets as there are horses, so 24 at most.
-2. **Draw.** When entries close, anyone calls `draw()`. One shuffle gives every ticket a different horse. If all 24 tickets sell, the draw can happen early.
-3. **Race.** After the race, the owner calls `settle(horse)` with the winner.
-4. **Claim.** The holder of the winning horse calls `claim(ticketId)` and takes the whole pool.
+There are three sweeps on the one contract, so you can pick your stake. They all run on the same race, and each has its own pool and its own 24 tickets.
+
+| Sweep | `sweepId` | Entry | Ticket ids | Biggest pool |
+|---|--:|--:|---|--:|
+| $1 | 0 | 1 USDT | 1001–1024 | 24 USDT |
+| $2 | 1 | 2 USDT | 2001–2024 | 48 USDT |
+| $10 | 2 | 10 USDT | 3001–3024 | 240 USDT |
+
+1. **Enter.** Approve the sweep's fee, then call `enter(sweepId)`. Each call mints one NFT ticket, and you can buy more than one, in any sweep.
+2. **Draw.** When entries close, the owner calls `draw(sweepId)` for each sweep that has tickets. One shuffle gives every ticket in that sweep a different horse. If a sweep sells out, its draw can happen early.
+3. **Race.** After the race, the owner calls `settle(horse)` once. That one result covers every sweep.
+4. **Claim.** In each sweep, whoever holds the NFT with the winning horse calls `claim(ticketId)` and takes that sweep's pool.
+
+### The NFT
+
+Tickets are transferable ERC-721s, with their metadata and image stored onchain. The image shows the sweep, the horse and where the ticket stands, and it changes as the ticket's fortunes do.
+
+Whoever holds a ticket when claiming gets paid, so tickets can be sold or given away. If you're buying one, check `claimable(ticketId)` first, because a claimed ticket has nothing left to pay. The NFT stays with its holder after claiming, as a keepsake.
 
 ### Edge cases
 
 | Situation | What happens |
 |---|---|
-| Nobody holds the winning horse (fewer than 24 entries) | The sweep is cancelled and everyone claims their fee back |
-| A horse is scratched after the draw | The owner calls `scratch(horse)`. That ticket gets a refund and the pool shrinks |
-| A horse is scratched before the draw, and the sweep was full | The last ticket bought misses out and gets a refund |
-| The owner never settles | Anyone can call `cancel()` a week after entries close, and everyone gets a refund |
-| You want a different fee | The owner calls `setEntryFee()`, which works only before the first entry |
+| Nobody in a sweep holds the winning horse | That sweep is cancelled and its tickets claim their fee back. Other sweeps aren't affected |
+| A horse is scratched after the draw | The owner calls `scratch(horse)`, which applies to every sweep. Tickets holding that horse claim a refund and their pools shrink |
+| A horse is scratched before the draw, and the sweep was full | The last ticket bought misses out, and can claim a refund once the draw has happened |
+| A horse is scratched before the draw, and the sweep wasn't full | Nobody gets a refund. That horse just isn't drawn |
+| A sweep has tickets but hasn't been drawn | `settle` reverts until the owner draws or cancels that sweep |
+| A sweep has no tickets | It's ignored, and marked cancelled at settlement |
+| The owner never settles | Anyone can call `cancel(sweepId)` a week after entries close, and that sweep's tickets get refunds |
+| USDT is sent straight to the contract | It joins no pool and can't be recovered |
+
+Refunds and prizes are both collected with `claim(ticketId)`. `claimable(ticketId)` shows what a ticket is owed, and `ticketStatus(ticketId)` says where it stands.
 
 ## Randomness
 
-The draw uses `block.prevrandao`. That's fine for a sweep between mates, but a validator proposing the draw block could in principle bias it. For a large pool, swap it for Chainlink VRF.
+The draw uses `block.prevrandao`, which is known a block ahead. That's why only the owner can draw: if anyone could, an entrant could draw from a contract that reverts unless they get the horse they want.
+
+So you're trusting the owner not to do that, just as you're trusting them to settle the right winner. A validator proposing the draw block could also bias it. That's fine for a sweep between mates, but for a large pool, swap it for Chainlink VRF.
 
 ## The field
 
@@ -60,16 +81,38 @@ Horse index = saddlecloth number − 1. Sources disagree on numbering, so check 
 
 ```sh
 forge test
+
+# Also run the full race day against real USDT and the real field
+forge test --fork-url $ETH_RPC_URL --match-contract Fork
 ```
 
 ## Deploy
 
 ```sh
-# Defaults: mainnet USDT, 10 USDT entry, entries close 3 Nov 2026 2:00pm AEDT (1:00pm Brisbane)
+# Defaults: mainnet USDT, entries close 3 Nov 2026 2:00pm AEDT (1:00pm Brisbane)
 forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 
-# Override any of them
-ENTRY_FEE=5000000 ENTRIES_CLOSE=1793674800 forge script script/Deploy.s.sol ...
+# Override either of them
+USDT=<address> ENTRIES_CLOSE=1793674800 forge script script/Deploy.s.sol ...
 ```
 
-USDT has 6 decimals, so 10 USDT = `10000000`. USDT also requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
+The fees are set in `entryFees()` in the deploy script and can't be changed after deploying. USDT has 6 decimals, so 10 USDT = `10000000`. USDT also requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
+
+## Race day
+
+These are all owner calls. Add `--rpc-url $ETH_RPC_URL --account <keystore>` to each `cast send`.
+
+```sh
+# Morning: scratch any withdrawn horses. This can't be undone, so check the name first.
+cast call $SWEEP "horseName(uint256)(string)" <index> --rpc-url $ETH_RPC_URL
+cast send $SWEEP "scratch(uint256)" <index>
+
+# 2:00pm AEDT, entries close: draw each sweep that has tickets, before the 3:00pm race
+cast send $SWEEP "draw(uint256)" 0
+cast send $SWEEP "draw(uint256)" 1
+cast send $SWEEP "draw(uint256)" 2
+
+# After the official result: check the name again. This can't be undone either.
+cast call $SWEEP "horseName(uint256)(string)" <index> --rpc-url $ETH_RPC_URL
+cast send $SWEEP "settle(uint256)" <index>
+```
