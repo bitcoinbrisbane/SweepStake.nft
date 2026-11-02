@@ -21,9 +21,10 @@ contract MelbourneCupSweepForkTest is Test {
     uint64 close;
 
     function setUp() public {
+        if (block.chainid != 1) return; // the constructor needs the real token
         deployer = new Deploy();
         close = uint64(block.timestamp + 1 days);
-        sweep = new MelbourneCupSweep(USDT, deployer.entryFees(), close, deployer.field());
+        sweep = new MelbourneCupSweep(USDT, deployer.entryFees(6), close, close + 30 minutes, deployer.field());
     }
 
     function _enter(address who, uint256 id) internal returns (uint256 ticketId) {
@@ -50,6 +51,8 @@ contract MelbourneCupSweepForkTest is Test {
             _enter(address(i + 2000), 2);
         }
         for (uint160 i; i < 5; ++i) _enter(address(i + 3000), 1);
+        // USDT's decimals() returns a uint256 and its symbol() a string, so check the NFT copes.
+        assertGt(bytes(sweep.tokenURI(1001)).length, 0);
         assertEq(USDT.balanceOf(address(sweep)), 24e6 + 240e6 + 10e6);
 
         vm.warp(close);
@@ -73,6 +76,7 @@ contract MelbourneCupSweepForkTest is Test {
             if (h != scratchedHorse && sweep.horseTicket(1, h) == 0) { winningHorse = h; break; }
         }
         assertLt(winningHorse, 24);
+        vm.warp(uint256(close) + 30 minutes);
         sweep.settle(winningHorse);
 
         uint256 win1 = sweep.horseTicket(0, winningHorse);

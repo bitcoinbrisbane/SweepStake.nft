@@ -2,26 +2,28 @@
 
 **Melbourne Cup sweep**
 
-An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in USDT on Ethereum mainnet.
+An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in a USD stablecoin chosen at deployment. By default that's USDT on Ethereum mainnet.
 
 ## How it works
 
 There are three sweeps on the one contract, so you can pick your stake. They all run on the same race, and each has its own pool and its own 24 tickets.
 
-| Sweep | `sweepId` | Entry | Ticket ids | Biggest pool |
-|---|--:|--:|---|--:|
-| $1 | 0 | 1 USDT | 1001–1024 | 24 USDT |
-| $2 | 1 | 2 USDT | 2001–2024 | 48 USDT |
-| $10 | 2 | 10 USDT | 3001–3024 | 240 USDT |
+| Sweep | `sweepId` | Ticket ids | Biggest pool |
+|---|--:|---|--:|
+| $1 | 0 | 1001–1024 | $24 |
+| $2 | 1 | 2001–2024 | $48 |
+| $10 | 2 | 3001–3024 | $240 |
 
 1. **Enter.** Approve the sweep's fee, then call `enter(sweepId)`. Each call mints one NFT ticket, and you can buy more than one, in any sweep.
 2. **Draw.** When entries close, the owner calls `draw(sweepId)` for each sweep that has tickets. One shuffle gives every ticket in that sweep a different horse. If a sweep sells out, its draw can happen early.
-3. **Race.** After the race, the owner calls `settle(horse)` once. That one result covers every sweep.
+3. **Race.** After the race, the owner calls `settle(horse)` once. That one result covers every sweep, and the contract won't accept it before 3:20pm AEDT (2:20pm Brisbane), 20 minutes after the start.
 4. **Claim.** In each sweep, whoever holds the NFT with the winning horse calls `claim(ticketId)` and takes that sweep's pool.
 
 ### The NFT
 
 Tickets are transferable ERC-721s, with their metadata and image stored onchain. The image shows the sweep, the horse and where the ticket stands, and it changes as the ticket's fortunes do.
+
+The art works like CryptoPunks: each horse is a 24x24 sprite kept in the contract (`src/HorseArt.sol`) and drawn as SVG on request. A horse's coat and silks come from a hash of its name, so it looks the same in every sweep. **The silks are generated, not the horse's real racing colours.** `horseImage(horse)` returns a horse's art on its own.
 
 Whoever holds a ticket when claiming gets paid, so tickets can be sold or given away. If you're buying one, check `claimable(ticketId)` first, because a claimed ticket has nothing left to pay. The NFT stays with its holder after claiming, as a keepsake.
 
@@ -36,7 +38,7 @@ Whoever holds a ticket when claiming gets paid, so tickets can be sold or given 
 | A sweep has tickets but hasn't been drawn | `settle` reverts until the owner draws or cancels that sweep |
 | A sweep has no tickets | It's ignored, and marked cancelled at settlement |
 | The owner never settles | Anyone can call `cancel(sweepId)` a week after entries close, and that sweep's tickets get refunds |
-| USDT is sent straight to the contract | It joins no pool and can't be recovered |
+| Tokens are sent straight to the contract | It joins no pool and can't be recovered |
 
 Refunds and prizes are both collected with `claim(ticketId)`. `claimable(ticketId)` shows what a ticket is owed, and `ticketStatus(ticketId)` says where it stands.
 
@@ -89,18 +91,35 @@ forge test --fork-url $ETH_RPC_URL --match-contract Fork
 ## Deploy
 
 ```sh
-# Defaults: mainnet USDT, entries close 3 Nov 2026 2:00pm AEDT (1:00pm Brisbane)
+# Defaults: mainnet USDT, entries close 3 Nov 2026 2:50pm AEDT (1:50pm Brisbane), results open 3:20pm AEDT (2:20pm Brisbane)
 forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 
-# Override either of them
-USDT=<address> ENTRIES_CLOSE=1793674800 forge script script/Deploy.s.sol ...
+# Override any of them
+TOKEN=<address> ENTRIES_CLOSE=1793677800 RESULTS_OPEN=1793679600 forge script script/Deploy.s.sol ...
 ```
 
-The fees are set in `entryFees()` in the deploy script and can't be changed after deploying. USDT has 6 decimals, so 10 USDT = `10000000`. USDT also requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value.
+The betting currency is passed to the constructor. Use a USD stablecoin, because tickets are labelled in dollars. `TOKEN` defaults to USDT on Ethereum mainnet and is required on any other chain. The script works out the fees from the token's decimals, and deploying fails if that address has no contract on that chain. The token, fees and both times can't be changed after deploying.
+
+USDT requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value. The entry page handles that.
+
+### Testing on Base
+
+```sh
+# USDC on Base. USDT there is 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2.
+# Short times, so you can run the draw and the result straight away.
+TOKEN=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 \
+ENTRIES_CLOSE=$(($(date +%s) + 600)) RESULTS_OPEN=$(($(date +%s) + 900)) \
+forge script script/Deploy.s.sol --rpc-url https://mainnet.base.org --account <keystore> --broadcast --verify
+
+# Point the page at it. On Base Sepolia, use base-sepolia and USDC 0x036CbD53842c5426634e7929541eC2318f3dCF7e.
+cd web && VITE_CHAIN=base VITE_SWEEP_ADDRESS=<address> yarn dev
+```
+
+On Base, `block.prevrandao` comes from Ethereum and stays the same across several blocks, so the draw's randomness is weaker. That's fine for a test.
 
 ## Entry page
 
-`web/` is a React and Vite page where people pick a sweep, buy a ticket, see their NFTs and claim prizes or refunds. Owner actions aren't on it, so use the commands under [Race day](#race-day) for those.
+`web/` is a React and Vite page where people pick a sweep, buy an NFT ticket, see the runners and their NFTs, and claim prizes or refunds. Owner actions aren't on it, so use the commands under [Race day](#race-day) for those.
 
 ```sh
 cd web
@@ -117,7 +136,7 @@ It works with browser wallets only, so on a phone, open the page in your wallet 
 
 The page is on DigitalOcean App Platform, in the SweepStake project on the Block 52 team: https://sweepstake-6wo88.ondigitalocean.app
 
-It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, then apply it:
+It builds from the branch named in `.do/app.yaml`, and pushing doesn't redeploy it. To point it at the contract, set `VITE_SWEEP_ADDRESS` in that file, and `VITE_CHAIN` if it isn't on mainnet, then apply it:
 
 ```sh
 doctl --context block52 apps update bca3bf67-c831-47a1-b3be-4cac0e29100f --spec .do/app.yaml
@@ -134,12 +153,14 @@ These are all owner calls. Add `--rpc-url $ETH_RPC_URL --account <keystore>` to 
 cast call $SWEEP "horseName(uint256)(string)" <index> --rpc-url $ETH_RPC_URL
 cast send $SWEEP "scratch(uint256)" <index>
 
-# 2:00pm AEDT, entries close: draw each sweep that has tickets, before the 3:00pm race
+# 2:50pm AEDT (1:50pm Brisbane), entries close: draw each sweep with tickets straight away.
+# The race starts at 3:00pm AEDT (2:00pm Brisbane), and the contract can't stop a late draw.
 cast send $SWEEP "draw(uint256)" 0
 cast send $SWEEP "draw(uint256)" 1
 cast send $SWEEP "draw(uint256)" 2
 
-# After the official result: check the name again. This can't be undone either.
+# From 3:20pm AEDT (2:20pm Brisbane), once the official result is in: check the name again.
+# This can't be undone either, and it reverts if you're early.
 cast call $SWEEP "horseName(uint256)(string)" <index> --rpc-url $ETH_RPC_URL
 cast send $SWEEP "settle(uint256)" <index>
 ```

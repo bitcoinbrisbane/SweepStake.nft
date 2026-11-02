@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
@@ -9,6 +10,7 @@ import {IERC4906} from "@openzeppelin/contracts/interfaces/IERC4906.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {HorseArt} from "./HorseArt.sol";
 
 /// @title Melbourne Cup sweepstake
 /// @notice Several sweeps run on the same race, one per entry fee. Pick a sweep and pay its fee to
@@ -38,11 +40,13 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     uint16 private constant NONE = 0;
     uint256 private constant ID_BASE = 1000; // ticket id = (sweep + 1) * 1000 + ticket number
-    uint256 private constant ONE_USDT = 1e6;
     uint256 public constant SETTLE_GRACE = 7 days;
 
     IERC20 public immutable token;
     uint64 public immutable entriesClose;
+    uint64 public immutable resultsOpen; // settle() reverts before this, to give the official result time to come in
+    address private immutable _self;
+    uint256 private immutable _oneToken; // one whole token in base units, for labelling fees
 
     Sweep[] public sweeps;
     string[] private _horses;
@@ -70,11 +74,20 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     error BadHorse();
     error BadSweep();
     error BadFee();
+    error BadTimes();
     error NotYourTicket();
     error NothingToClaim();
     error TooEarly();
 
-    constructor(IERC20 token_, uint256[] memory entryFees, uint64 entriesClose_, string[] memory horses_)
+    /// @param token_ The betting currency. Use a USD stablecoin, because tickets are labelled in dollars.
+    ///        Reverts if this address has no token on the chain being deployed to.
+    constructor(
+        IERC20 token_,
+        uint256[] memory entryFees,
+        uint64 entriesClose_,
+        uint64 resultsOpen_,
+        string[] memory horses_
+    )
         ERC721("Melbourne Cup Sweep 2026", "CUP26")
         Ownable(msg.sender)
     {
@@ -82,8 +95,12 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         uint256 sweepTotal = entryFees.length;
         if (horseTotal == 0 || horseTotal >= ID_BASE) revert BadHorse();
         if (sweepTotal == 0) revert BadSweep();
+        if (resultsOpen_ < entriesClose_) revert BadTimes();
         token = token_;
         entriesClose = entriesClose_;
+        resultsOpen = resultsOpen_;
+        _self = address(this);
+        _oneToken = uint256(10) ** IERC20Metadata(address(token_)).decimals();
         for (uint256 i; i < horseTotal; ++i) _horses.push(horses_[i]);
         for (uint256 i; i < sweepTotal; ++i) {
             if (entryFees[i] == 0) revert BadFee();
@@ -103,7 +120,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         ticketId = _ticketId(sweepId, s.ticketCount);
         ++s.ticketCount;
         _mint(msg.sender, ticketId);
-        token.safeTransferFrom(msg.sender, address(this), s.entryFee);
+        token.safeTransferFrom(msg.sender, _self, s.entryFee);
         emit Entered(sweepId, ticketId, msg.sender);
     }
 
@@ -137,7 +154,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     /// @dev Fisher-Yates shuffle of the horses still running.
     function _shuffle(uint256 sweepId, uint256 n) private view returns (uint256[] memory pool, uint256 seed) {
         pool = _activeHorseIndexes();
-        seed = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, address(this), sweepId, n)));
+        seed = uint256(keccak256(abi.encode(block.prevrandao, block.timestamp, _self, sweepId, n)));
         for (uint256 i = pool.length; i > 1; --i) {
             uint256 j = uint256(keccak256(abi.encode(seed, i))) % i;
             (pool[i - 1], pool[j]) = (pool[j], pool[i - 1]);
@@ -158,10 +175,11 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     /// @notice Record the official winner (horse index) for every sweep at once. In each sweep the
     ///         holder of that horse takes the pool. A sweep where nobody holds it is cancelled and
-    ///         refunded. Reverts if a sweep with tickets hasn't been drawn: draw or cancel it first.
+    ///         refunded. Reverts before resultsOpen, and if a sweep with tickets hasn't been drawn:
+    ///         draw or cancel it first.
     function settle(uint256 horse) external onlyOwner {
         if (raceSettled) revert WrongState();
-        if (block.timestamp < entriesClose) revert EntriesStillOpen();
+        if (block.timestamp < resultsOpen) revert TooEarly();
         if (horse >= _horses.length || scratched[horse]) revert BadHorse();
 
         raceSettled = true;
@@ -229,7 +247,7 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
     }
 
     /// @notice A sweep's pot: its entry fees, except those owed back to scratched or horseless tickets.
-    ///         Tracked per sweep because all sweeps share the contract's balance, so USDT sent
+    ///         Tracked per sweep because all sweeps share the contract's balance, so tokens sent
     ///         straight to the contract joins no pool and can't be recovered.
     function prizePool(uint256 sweepId) public view returns (uint256) {
         Sweep storage s = _sweep(sweepId);
@@ -318,32 +336,71 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
 
     // ---------------------------------------------------------------- NFT metadata
 
+    /// @dev What a ticket's image and metadata show.
+    struct Card {
+        uint256 sweepId;
+        string fee; // such as $10
+        string number; // the ticket's number within its sweep
+        string horse;
+        string cloth;
+        string status;
+    }
+
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, IERC165) returns (bool) {
         return interfaceId == bytes4(0x49064906) || super.supportsInterface(interfaceId);
     }
 
+    /// @notice A horse's pixel art on its own, as a data URI. The art itself lives in this contract.
+    function horseImage(uint256 horse) external view returns (string memory) {
+        if (horse >= _horses.length) revert BadHorse();
+        return _svgDataUri(
+            string.concat(
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" shape-rendering="crispEdges">',
+                HorseArt.pixels(_horses[horse]),
+                "</svg>"
+            )
+        );
+    }
+
     /// @notice Fully onchain metadata and image. They change as the ticket's fortunes do.
-    /// @dev    Horse names come from the deployer and are assumed free of quotes and XML characters.
+    /// @dev    Horse names and the token's symbol come from the deployer's choices, and are assumed
+    ///         free of quotes and XML characters.
     function tokenURI(uint256 ticketId) public view override returns (string memory) {
         _requireOwned(ticketId);
         uint256 sweepId = _sweepOf(ticketId);
-        string memory fee = string.concat("$", Strings.toString(sweeps[sweepId].entryFee / ONE_USDT));
-        string memory number = Strings.toString(ticketId % ID_BASE);
-        string memory status = ticketStatus(ticketId);
-        (string memory horse, string memory cloth) = _horseLabels(ticketId, sweepId);
+        Card memory card;
+        card.sweepId = sweepId;
+        card.fee = string.concat("$", Strings.toString(sweeps[sweepId].entryFee / _oneToken));
+        card.number = Strings.toString(ticketId % ID_BASE);
+        card.status = ticketStatus(ticketId);
+        (card.horse, card.cloth) = _horseLabels(ticketId, sweepId);
 
-        string memory image = Base64.encode(bytes(_svg(sweepId, fee, number, horse, cloth, status)));
         return string.concat(
             "data:application/json;base64,",
-            Base64.encode(bytes(string.concat(
-                '{"name":"Melbourne Cup 2026 ', fee, ' Sweep #', number,
-                '","description":"A ticket in the ', fee, ' Melbourne Cup 2026 sweep, paid in USDT. Hold the winning horse to take the pool.",',
-                '"image":"data:image/svg+xml;base64,', image,
-                '","attributes":[{"trait_type":"Sweep","value":"', fee,
-                '"},{"trait_type":"Horse","value":"', horse,
-                '"},{"trait_type":"Status","value":"', status, '"}]}'
-            )))
+            Base64.encode(bytes(string.concat(_summary(card), _svgDataUri(_svg(card, _art(ticketId))), _attributes(card, ticketId))))
         );
+    }
+
+    function _summary(Card memory card) private view returns (string memory) {
+        return string.concat(
+            '{"name":"Melbourne Cup 2026 ', card.fee, " Sweep #", card.number,
+            '","description":"An NFT ticket in the ', card.fee, " Melbourne Cup 2026 sweep, paid in ",
+            IERC20Metadata(address(token)).symbol(),
+            '. Hold the winning horse to take the pool.","image":"'
+        );
+    }
+
+    function _attributes(Card memory card, uint256 ticketId) private view returns (string memory) {
+        return string.concat(
+            '","attributes":[{"trait_type":"Sweep","value":"', card.fee,
+            '"},{"trait_type":"Horse","value":"', card.horse,
+            '"},{"trait_type":"Status","value":"', card.status, '"}',
+            _traits(ticketId), "]}"
+        );
+    }
+
+    function _svgDataUri(string memory svg) private pure returns (string memory) {
+        return string.concat("data:image/svg+xml;base64,", Base64.encode(bytes(svg)));
     }
 
     function _horseLabels(uint256 ticketId, uint256 sweepId) private view returns (string memory horse, string memory cloth) {
@@ -352,32 +409,51 @@ contract MelbourneCupSweep is IERC4906, ERC721, Ownable {
         return (sweeps[sweepId].state == State.Open ? "Horse to be drawn" : "No horse", "");
     }
 
-    function _svg(
-        uint256 sweepId,
-        string memory fee,
-        string memory number,
-        string memory horse,
-        string memory cloth,
-        string memory status
-    ) private pure returns (string memory) {
-        string memory colour = sweepId == 0 ? "#cd8f55" : sweepId == 1 ? "#c3ccd6" : "#e6bd4f";
+    /// @dev The ticket's horse, faded if it was scratched, or a silhouette if it doesn't have one.
+    function _art(uint256 ticketId) private view returns (string memory) {
+        uint16 h = _tickets[ticketId].horse;
+        if (h == NONE) return HorseArt.silhouette();
+        string memory pixels = HorseArt.pixels(_horses[h - 1]);
+        return scratched[h - 1] ? string.concat('<g opacity=".35">', pixels, "</g>") : pixels;
+    }
+
+    function _traits(uint256 ticketId) private view returns (string memory) {
+        uint16 h = _tickets[ticketId].horse;
+        if (h == NONE) return "";
+        string memory name = _horses[h - 1];
         return string.concat(
-            string.concat(
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">',
-                '<rect width="400" height="400" fill="#123326"/>',
-                '<rect x="16" y="16" width="368" height="368" rx="18" fill="none" stroke-width="3" stroke="', colour, '"/>',
-                '<g font-family="Georgia,serif" text-anchor="middle" fill="#f5f0e1">',
-                '<text x="200" y="66" font-size="20" letter-spacing="1">Melbourne Cup 2026</text>'
-            ),
-            string.concat(
-                '<text x="200" y="142" font-size="68" font-weight="bold" fill="', colour, '">', fee, '</text>',
-                '<text x="200" y="176" font-size="16">Sweep ticket #', number, '</text>'
-            ),
-            string.concat(
-                '<text x="200" y="250" font-size="30" font-weight="bold">', horse, '</text>',
-                '<text x="200" y="280" font-size="15">', cloth, '</text>',
-                '<text x="200" y="346" font-size="17" fill="', colour, '">', status, '</text></g></svg>'
-            )
+            ',{"trait_type":"Coat","value":"', HorseArt.coatName(name),
+            '"},{"trait_type":"Silks","value":"', HorseArt.silksName(name), '"}'
+        );
+    }
+
+    function _svg(Card memory card, string memory art) private pure returns (string memory) {
+        string memory colour = card.sweepId == 0 ? "#cd8f55" : card.sweepId == 1 ? "#c3ccd6" : "#e6bd4f";
+        string memory tint = card.sweepId == 0 ? "#e8cdb0" : card.sweepId == 1 ? "#dfe5ec" : "#f3e2a8";
+        return string.concat(_svgArt(colour, tint, art), _svgText(card, colour));
+    }
+
+    function _svgArt(string memory colour, string memory tint, string memory art) private pure returns (string memory) {
+        return string.concat(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#123326"/>'
+            '<rect x="16" y="16" width="368" height="368" rx="18" fill="none" stroke-width="3" stroke="', colour,
+            '"/><rect x="116" y="60" width="168" height="168" fill="', tint,
+            '"/><g transform="translate(116 60) scale(7)" shape-rendering="crispEdges">', art, "</g>"
+        );
+    }
+
+    function _svgText(Card memory card, string memory colour) private pure returns (string memory) {
+        string memory names = string.concat(
+            '<g font-family="Georgia,serif" text-anchor="middle" fill="#f5f0e1">'
+            '<text x="200" y="47" font-size="18" letter-spacing="1">Melbourne Cup 2026</text>'
+            '<text x="200" y="264" font-size="28" font-weight="bold">', card.horse,
+            '</text><text x="200" y="286" font-size="14">', card.cloth, "</text>"
+        );
+        return string.concat(
+            names,
+            '<text x="200" y="326" font-size="17"><tspan font-size="30" font-weight="bold" fill="', colour, '">', card.fee,
+            "</tspan> NFT ticket #", card.number,
+            '</text><text x="200" y="358" font-size="16" fill="', colour, '">', card.status, "</text></g></svg>"
         );
     }
 }

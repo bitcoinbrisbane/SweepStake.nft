@@ -3,10 +3,12 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC4906} from "@openzeppelin/contracts/interfaces/IERC4906.sol";
 import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MelbourneCupSweep} from "../src/MelbourneCupSweep.sol";
+import {HorseArt} from "../src/HorseArt.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 
 /// @dev Mimics mainnet USDT: 6 decimals and transfer/transferFrom/approve return nothing.
@@ -14,6 +16,7 @@ contract MockUSDT {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
     uint8 public constant decimals = 6;
+    string public constant symbol = "USDT";
 
     function mint(address to, uint256 amt) external { balanceOf[to] += amt; }
     function approve(address s, uint256 amt) external { allowance[msg.sender][s] = amt; }
@@ -21,6 +24,15 @@ contract MockUSDT {
     function transferFrom(address f, address to, uint256 amt) external {
         allowance[f][msg.sender] -= amt; balanceOf[f] -= amt; balanceOf[to] += amt;
     }
+}
+
+/// @dev A different kind of stablecoin: 18 decimals, and transfers return true.
+contract MockDAI {
+    uint8 public constant decimals = 18;
+    string public constant symbol = "DAI";
+
+    function transfer(address, uint256) external pure returns (bool) { return true; }
+    function transferFrom(address, address, uint256) external pure returns (bool) { return true; }
 }
 
 /// @dev The attack that owner-only draw() closes: draw, then revert unless you got the horse you want.
@@ -41,15 +53,17 @@ contract MelbourneCupSweepTest is Test {
     MockUSDT usdt;
     MelbourneCupSweep sweep;
     uint64 close;
+    uint64 results;
 
     function setUp() public {
         usdt = new MockUSDT();
         close = uint64(block.timestamp + 1 days);
+        results = close + 30 minutes;
         sweep = _deploy(_fourHorses());
     }
 
     function _deploy(string[] memory horses) internal returns (MelbourneCupSweep) {
-        return new MelbourneCupSweep(IERC20(address(usdt)), new Deploy().entryFees(), close, horses);
+        return new MelbourneCupSweep(IERC20(address(usdt)), new Deploy().entryFees(6), close, results, horses);
     }
 
     function _fourHorses() internal pure returns (string[] memory h) {
@@ -73,6 +87,12 @@ contract MelbourneCupSweepTest is Test {
     /// @dev Each sweep gets its own set of wallets, so balances are easy to check.
     function _fill(uint256 id, uint256 n) internal {
         for (uint256 i; i < n; ++i) _enter(address(uint160((id + 1) * 100 + i)), id);
+    }
+
+    /// @dev Warping is a cheatcode, so this still works straight after vm.expectRevert or vm.expectEmit.
+    function _settle(uint256 horse) internal {
+        vm.warp(results);
+        sweep.settle(horse);
     }
 
     function _claim(uint256 ticketId) internal {
@@ -102,6 +122,30 @@ contract MelbourneCupSweepTest is Test {
         assertEq(sweep.prizePool(TEN), 10e6);
     }
 
+    function test_anyStablecoinWorks_whateverItsDecimals() public {
+        MockDAI dai = new MockDAI();
+        uint256[] memory fees = new Deploy().entryFees(18);
+        assertEq(fees[2], 10e18);
+
+        sweep = new MelbourneCupSweep(IERC20(address(dai)), fees, close, results, _fourHorses());
+        assertEq(address(sweep.token()), address(dai));
+        assertEq(sweep.enter(TEN), 3001);
+        assertEq(sweep.prizePool(TEN), 10e18);
+
+        string memory json = _json(3001);
+        assertEq(vm.parseJsonString(json, ".name"), "Melbourne Cup 2026 $10 Sweep #1");
+        assertEq(vm.parseJsonString(json, ".attributes[0].value"), "$10");
+        assertTrue(_contains(vm.parseJsonString(json, ".description"), "paid in DAI"));
+    }
+
+    /// @dev Mainnet USDT's address has no code on Base, for example, so this stops a wrong-chain deploy.
+    function test_constructor_rejectsAddressWithNoToken() public {
+        uint256[] memory fees = new Deploy().entryFees(6);
+        string[] memory horses = _fourHorses();
+        vm.expectRevert();
+        new MelbourneCupSweep(IERC20(address(0xDEAD)), fees, close, results, horses);
+    }
+
     function test_enter_rejectsUnknownSweep() public {
         vm.expectRevert(MelbourneCupSweep.BadSweep.selector);
         sweep.enter(3);
@@ -110,11 +154,11 @@ contract MelbourneCupSweepTest is Test {
     function test_constructor_rejectsBadFees() public {
         uint256[] memory none = new uint256[](0);
         vm.expectRevert(MelbourneCupSweep.BadSweep.selector);
-        new MelbourneCupSweep(IERC20(address(usdt)), none, close, _fourHorses());
+        new MelbourneCupSweep(IERC20(address(usdt)), none, close, results, _fourHorses());
 
         uint256[] memory zero = new uint256[](1);
         vm.expectRevert(MelbourneCupSweep.BadFee.selector);
-        new MelbourneCupSweep(IERC20(address(usdt)), zero, close, _fourHorses());
+        new MelbourneCupSweep(IERC20(address(usdt)), zero, close, results, _fourHorses());
     }
 
     function test_sweepsFillIndependently() public {
@@ -154,7 +198,7 @@ contract MelbourneCupSweepTest is Test {
         vm.prevrandao(bytes32(uint256(42)));
         sweep.draw(ONE); sweep.draw(TWO); sweep.draw(TEN);
 
-        sweep.settle(1);
+        _settle(1);
         assertTrue(sweep.raceSettled());
         assertEq(sweep.winningHorse(), 1);
 
@@ -174,7 +218,7 @@ contract MelbourneCupSweepTest is Test {
         _fill(TEN, 4);
         sweep.draw(TEN);
         vm.warp(close);
-        sweep.settle(0);
+        _settle(0);
         uint256 winner = sweep.horseTicket(TEN, 0);
         for (uint256 t = 3001; t <= 3004; ++t) {
             if (t == winner) continue;
@@ -192,7 +236,7 @@ contract MelbourneCupSweepTest is Test {
 
         uint256 unowned;
         for (uint256 h; h < 4; ++h) if (sweep.horseTicket(ONE, h) == 0) { unowned = h; break; }
-        sweep.settle(unowned);
+        _settle(unowned);
 
         assertEq(uint256(_state(ONE)), uint256(MelbourneCupSweep.State.Cancelled));
         assertEq(uint256(_state(TWO)), uint256(MelbourneCupSweep.State.Cancelled)); // empty
@@ -212,11 +256,11 @@ contract MelbourneCupSweepTest is Test {
         sweep.draw(ONE);
 
         vm.expectRevert(MelbourneCupSweep.WrongState.selector);
-        sweep.settle(0);
+        _settle(0);
         assertFalse(sweep.raceSettled());
 
         sweep.cancel(TEN);
-        sweep.settle(0);
+        _settle(0);
         assertTrue(sweep.raceSettled());
         _claim(3001);
         assertEq(_balanceOfHolder(3001), 10e6);
@@ -230,29 +274,56 @@ contract MelbourneCupSweepTest is Test {
         sweep.draw(TEN);
         for (uint256 h; h < 24; ++h) {
             uint256 snapshot = vm.snapshotState();
-            sweep.settle(h);
+            _settle(h);
             assertEq(sweep.winningHorse(), h);
             vm.revertToState(snapshot);
         }
         vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
-        sweep.settle(24);
+        _settle(24);
     }
 
     function test_settle_onlyOnce() public {
         _fill(ONE, 4);
         vm.warp(close);
         sweep.draw(ONE);
-        sweep.settle(0);
+        _settle(0);
         vm.expectRevert(MelbourneCupSweep.WrongState.selector);
-        sweep.settle(1);
+        _settle(1);
         assertEq(sweep.winningHorse(), 0);
     }
 
-    function test_settle_notBeforeEntriesClose() public {
+    function test_settle_notBeforeResultsOpen() public {
         _fill(ONE, 4);
         sweep.draw(ONE); // full, so it can draw early
-        vm.expectRevert(MelbourneCupSweep.EntriesStillOpen.selector);
+        vm.expectRevert(MelbourneCupSweep.TooEarly.selector);
+        sweep.settle(0); // before entries close
+
+        vm.warp(results - 1);
+        vm.expectRevert(MelbourneCupSweep.TooEarly.selector);
+        sweep.settle(0); // entries closed, but one second short
+
+        vm.warp(results);
         sweep.settle(0);
+        assertTrue(sweep.raceSettled());
+    }
+
+    function test_constructor_rejectsResultsBeforeClose() public {
+        uint256[] memory fees = new Deploy().entryFees(6);
+        vm.expectRevert(MelbourneCupSweep.BadTimes.selector);
+        new MelbourneCupSweep(IERC20(address(usdt)), fees, close, close - 1, _fourHorses());
+    }
+
+    /// @dev The real times: entries close, then the 3:00pm AEDT race (1793678400), then results open.
+    function test_deployScript_usesTheRaceDayTimes() public {
+        vm.setEnv("TOKEN", vm.toString(address(usdt)));
+        MelbourneCupSweep deployed = new Deploy().run();
+        assertEq(address(deployed.token()), address(usdt));
+        (uint256 tenDollars,,,) = deployed.sweeps(TEN);
+        assertEq(tenDollars, 10e6);
+        assertEq(deployed.entriesClose(), 1793677800); // 2:50pm AEDT
+        assertEq(deployed.resultsOpen(), 1793679600); // 3:20pm AEDT
+        assertLt(deployed.entriesClose(), 1793678400);
+        assertGt(deployed.resultsOpen(), 1793678400);
     }
 
     function test_onlyOwnerSettlesAndScratches() public {
@@ -261,7 +332,7 @@ contract MelbourneCupSweepTest is Test {
         sweep.draw(ONE);
         vm.startPrank(address(0xBAD));
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(0xBAD)));
-        sweep.settle(0);
+        _settle(0);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(0xBAD)));
         sweep.scratch(0);
         vm.stopPrank();
@@ -351,7 +422,7 @@ contract MelbourneCupSweepTest is Test {
         assertEq(_balanceOfHolder(r1), 1e6);
         assertEq(_balanceOfHolder(r10), 10e6);
 
-        sweep.settle(0);
+        _settle(0);
         uint256 w1 = sweep.horseTicket(ONE, 0);
         uint256 w10 = sweep.horseTicket(TEN, 0);
         _claim(w1); _claim(w10);
@@ -365,7 +436,7 @@ contract MelbourneCupSweepTest is Test {
         vm.warp(close);
         sweep.draw(TEN);
         sweep.scratch(1); sweep.scratch(2);
-        sweep.settle(0);
+        _settle(0);
 
         uint256 winner = sweep.horseTicket(TEN, 0);
         _claim(winner);
@@ -463,9 +534,9 @@ contract MelbourneCupSweepTest is Test {
         sweep.claim(refunded); // no double refund
 
         vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
-        sweep.settle(0); // a scratched horse can't win
+        _settle(0); // a scratched horse can't win
 
-        sweep.settle(1);
+        _settle(1);
         vm.expectRevert(MelbourneCupSweep.WrongState.selector);
         sweep.scratch(2); // nothing after settling
     }
@@ -491,7 +562,7 @@ contract MelbourneCupSweepTest is Test {
         // Settle on the first horse still running, if any are.
         for (uint256 i; i < 4; ++i) {
             uint256 h = (uint256(winner) + i) % 4;
-            if (!sweep.scratched(h)) { sweep.settle(h); break; }
+            if (!sweep.scratched(h)) { _settle(h); break; }
         }
 
         uint256 owed;
@@ -548,11 +619,98 @@ contract MelbourneCupSweepTest is Test {
         assertFalse(sweep.supportsInterface(0xffffffff));
     }
 
+    /// @dev Wallets and marketplaces find NFTs through this event, so a ticket has to emit it on mint.
+    function test_ticketsAreRealNFTs_mintEventBalanceAndTransfers() public {
+        address buyer = address(0xA);
+        address friend = address(0xB);
+        usdt.mint(buyer, 10e6);
+        vm.startPrank(buyer);
+        usdt.approve(address(sweep), 10e6);
+        vm.expectEmit();
+        emit IERC721.Transfer(address(0), buyer, 3001);
+        sweep.enter(TEN);
+        assertEq(sweep.ownerOf(3001), buyer);
+        assertEq(sweep.balanceOf(buyer), 1);
+
+        sweep.safeTransferFrom(buyer, friend, 3001);
+        vm.stopPrank();
+        assertEq(sweep.ownerOf(3001), friend);
+        assertEq(sweep.balanceOf(buyer), 0);
+
+        vm.prank(friend);
+        sweep.approve(buyer, 3001);
+        vm.prank(buyer);
+        sweep.transferFrom(friend, buyer, 3001);
+        assertEq(sweep.ownerOf(3001), buyer);
+    }
+
+    function test_art_isStoredOnchain_andEveryRunnerLooksDifferent() public {
+        string[] memory field = new Deploy().field();
+        sweep = _deploy(field);
+        for (uint256 h; h < field.length; ++h) {
+            string memory svg = _decode(sweep.horseImage(h), bytes("data:image/svg+xml;base64,").length);
+            assertTrue(_contains(svg, "<rect "));
+            assertTrue(_contains(svg, 'viewBox="0 0 24 24"'));
+            for (uint256 other; other < h; ++other) {
+                assertNotEq(
+                    string.concat(HorseArt.coatName(field[h]), HorseArt.silksName(field[h])),
+                    string.concat(HorseArt.coatName(field[other]), HorseArt.silksName(field[other]))
+                );
+            }
+        }
+        vm.expectRevert(MelbourneCupSweep.BadHorse.selector);
+        sweep.horseImage(24);
+    }
+
+    function test_art_sameHorseLooksTheSameInEverySweep() public {
+        _fill(ONE, 4); _fill(TEN, 4);
+        vm.warp(close);
+        sweep.draw(ONE); sweep.draw(TEN);
+        string memory one = _json(sweep.horseTicket(ONE, 2));
+        string memory ten = _json(sweep.horseTicket(TEN, 2));
+        assertEq(vm.parseJsonString(one, ".attributes[3].trait_type"), "Coat");
+        assertEq(vm.parseJsonString(one, ".attributes[4].trait_type"), "Silks");
+        assertEq(vm.parseJsonString(one, ".attributes[3].value"), vm.parseJsonString(ten, ".attributes[3].value"));
+        assertEq(vm.parseJsonString(one, ".attributes[4].value"), vm.parseJsonString(ten, ".attributes[4].value"));
+    }
+
+    function test_art_showsTheTicketsFortunes() public {
+        _fill(TEN, 4);
+        string memory hidden = _decode(vm.parseJsonString(_json(3001), ".image"), bytes("data:image/svg+xml;base64,").length);
+        assertTrue(_contains(hidden, "NFT ticket #"));
+        assertTrue(_contains(hidden, "#3f4f47")); // the silhouette
+
+        vm.warp(close);
+        sweep.draw(TEN);
+        string memory drawn = _decode(vm.parseJsonString(_json(3001), ".image"), bytes("data:image/svg+xml;base64,").length);
+        assertFalse(_contains(drawn, "#3f4f47"));
+        assertFalse(_contains(drawn, 'opacity=".35"'));
+
+        (,, uint256 horse,,) = sweep.ticket(3001);
+        sweep.scratch(horse);
+        string memory faded = _decode(vm.parseJsonString(_json(3001), ".image"), bytes("data:image/svg+xml;base64,").length);
+        assertTrue(_contains(faded, 'opacity=".35"'));
+    }
+
+    /// @dev Public RPCs cap the gas of a read, so the art has to stay well under the usual limits.
+    function test_art_tokenURI_isCheapEnoughForPublicRPCs() public {
+        sweep = _deploy(new Deploy().field());
+        _fill(TEN, 24);
+        vm.warp(close);
+        sweep.draw(TEN);
+        uint256 before = gasleft();
+        string memory uri = sweep.tokenURI(3001);
+        uint256 used = before - gasleft();
+        emit log_named_uint("tokenURI gas", used);
+        emit log_named_uint("tokenURI bytes", bytes(uri).length);
+        assertLt(used, 10_000_000);
+    }
+
     function test_soldTicket_newHolderClaimsPrize() public {
         _fill(TEN, 4);
         vm.warp(close);
         sweep.draw(TEN);
-        sweep.settle(0);
+        _settle(0);
         uint256 winner = sweep.horseTicket(TEN, 0);
         address seller = sweep.ownerOf(winner);
         address buyer = address(0xB0B);
@@ -625,7 +783,7 @@ contract MelbourneCupSweepTest is Test {
         vm.warp(close);
         vm.expectEmit();
         emit IERC4906.BatchMetadataUpdate(0, type(uint256).max);
-        sweep.settle(1);
+        _settle(1);
 
         uint256 winner = sweep.horseTicket(TEN, 1);
         address holder = sweep.ownerOf(winner);
@@ -648,7 +806,7 @@ contract MelbourneCupSweepTest is Test {
         _claim(scratchedTicket);
         assertEq(sweep.ticketStatus(scratchedTicket), "Refunded");
 
-        sweep.settle(1);
+        _settle(1);
         uint256 winner = sweep.horseTicket(TEN, 1);
         uint256 loser = sweep.horseTicket(TEN, 2);
         assertEq(sweep.ticketStatus(winner), "Winner - prize to claim");

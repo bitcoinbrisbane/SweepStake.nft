@@ -3,39 +3,46 @@ pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {MelbourneCupSweep} from "../src/MelbourneCupSweep.sol";
 
 /// @notice Deploys the 2026 Melbourne Cup sweep.
 ///
 ///   forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL --account <keystore> --broadcast --verify
 ///
-/// Runs three sweeps on the one contract: sweep 0 = 1 USDT, sweep 1 = 2 USDT, sweep 2 = 10 USDT.
+/// Runs three sweeps on the one contract: sweep 0 = $1, sweep 1 = $2, sweep 2 = $10, in a USD stablecoin.
 ///
-/// Optional env overrides:
-///   USDT            token address        (default: Ethereum mainnet USDT)
-///   ENTRIES_CLOSE   unix seconds         (default: 1793674800 = 3 Nov 2026 2:00pm AEDT, 1:00pm Brisbane)
+/// Env:
+///   TOKEN           betting currency     (default on Ethereum mainnet: USDT. Required on any other chain.)
+///   ENTRIES_CLOSE   unix seconds         (default: 1793677800 = 3 Nov 2026 2:50pm AEDT, 1:50pm Brisbane)
+///   RESULTS_OPEN    unix seconds         (default: 1793679600 = 3 Nov 2026 3:20pm AEDT, 2:20pm Brisbane)
 contract Deploy is Script {
     address constant MAINNET_USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
     function run() external returns (MelbourneCupSweep sweep) {
-        address usdt = vm.envOr("USDT", MAINNET_USDT);
-        uint64 close = uint64(vm.envOr("ENTRIES_CLOSE", uint256(1793674800)));
+        address token = block.chainid == 1 ? vm.envOr("TOKEN", MAINNET_USDT) : vm.envAddress("TOKEN");
+        uint256[] memory fees = entryFees(IERC20Metadata(token).decimals());
+        uint64 close = uint64(vm.envOr("ENTRIES_CLOSE", uint256(1793677800)));
+        uint64 results = uint64(vm.envOr("RESULTS_OPEN", uint256(1793679600)));
 
         vm.startBroadcast();
-        sweep = new MelbourneCupSweep(IERC20(usdt), entryFees(), close, field());
+        sweep = new MelbourneCupSweep(IERC20(token), fees, close, results, field());
         vm.stopBroadcast();
 
         console.log("MelbourneCupSweep:", address(sweep));
         console.log("Sweeps:", sweep.sweepCount());
+        console.log("Token:", token, IERC20Metadata(token).symbol());
         console.log("Entries close:", close);
+        console.log("Results open:", results);
     }
 
-    /// @dev USDT has 6 decimals. Array position = sweep id.
-    function entryFees() public pure returns (uint256[] memory f) {
+    /// @dev $1, $2 and $10 in the token's base units. Array position = sweep id.
+    function entryFees(uint8 decimals) public pure returns (uint256[] memory f) {
+        uint256 one = uint256(10) ** decimals;
         f = new uint256[](3);
-        f[0] = 1e6;
-        f[1] = 2e6;
-        f[2] = 10e6;
+        f[0] = 1 * one;
+        f[1] = 2 * one;
+        f[2] = 10 * one;
     }
 
     /// @dev 2026 final field in saddlecloth order. Horse index = saddlecloth number - 1.
