@@ -164,7 +164,7 @@ function Sweepstake() {
           </div>
         ) : (
           <button className="ghost-button" onClick={requestConnect}>
-            Connect wallet
+            <span aria-hidden="true">🐎</span> Connect wallet
           </button>
         )}
       </header>

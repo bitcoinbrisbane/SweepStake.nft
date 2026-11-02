@@ -65,7 +65,7 @@ export function SweepCard(props: {
     if (sweep.state !== SweepState.Open) return null;
     if (closed) return { label: "Entries closed", disabled: true };
     if (full) return { label: "Sold out", disabled: true };
-    if (!wallet.account) return { label: "Connect wallet to buy", onClick: onConnect };
+    if (!wallet.account) return { label: "🐎 Connect wallet to buy", onClick: onConnect };
     if (!wallet.onRightChain) return { label: `Switch to ${CHAIN.name}`, onClick: onSwitch };
     if (active) return { label: "Working…", disabled: true };
     if (!mine) return { label: "Checking your balance…", disabled: true };
