@@ -301,7 +301,7 @@ const simulateEnter = (wallet: Wallet, target: Sweep) =>
   });
 
 /**
- * Buys one ticket, returning the horse it pulled from the hat. Approves the token first if needed. USDT refuses to change one non-zero allowance
+ * Buys one ticket, returning its id and the horse it pulled from the hat. Approves the token first if needed. USDT refuses to change one non-zero allowance
  * straight to another, so a smaller leftover approval has to be cleared first. An approval that's
  * already big enough, such as from an attempt abandoned part way, is reused.
  */
@@ -344,7 +344,20 @@ export async function buyTicket(wallet: Wallet, target: Sweep, onProgress: (p: P
   report("network", hash);
   const receipt = await confirmed(hash);
   const [pulled] = parseEventLogs({ abi: sweepAbi, logs: receipt.logs, eventName: "HorseAssigned" });
-  return pulled?.args.name ?? null;
+  return pulled ? { ticketId: pulled.args.ticketId, horse: pulled.args.name } : null;
+}
+
+/** Retries, because a public RPC can be a moment behind the block that minted the ticket. */
+export async function loadTicketImage(id: bigint): Promise<string | null> {
+  for (let tries = 0; tries < 6; tries++) {
+    try {
+      const uri = await artClient.readContract({ ...sweep, functionName: "tokenURI", args: [id] });
+      return (JSON.parse(atob(uri.split(",")[1])) as Metadata).image;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  return null;
 }
 
 /** Test chains only: mints free test tokens to the connected wallet, which pays its own gas. */

@@ -3,9 +3,11 @@ import {
   amountLabel,
   buyTicket,
   claimTicket,
+  feeLabel,
   fundLocalWallet,
   loadMine,
   loadOverview,
+  loadTicketImage,
   mintTestTokens,
   shortAddress,
   type Progress,
@@ -16,6 +18,7 @@ import { CHAIN, EXPLORER, isConfigured, IS_LOCAL, IS_TEST_MONEY, RACE_START, SWE
 import { friendlyError } from "./errors";
 import { MyTickets } from "./MyTickets";
 import { Runners } from "./Runners";
+import { SuccessModal, type Purchase } from "./SuccessModal";
 import { SweepCard, type Message } from "./SweepCard";
 import { useNow, usePoll } from "./usePoll";
 import { useWallet, type WalletOption } from "./wallet";
@@ -80,6 +83,7 @@ function Sweepstake() {
   }, [account, refreshMine]);
 
   const [selectedSweep, setSelectedSweep] = useState(0);
+  const [purchase, setPurchase] = useState<Purchase | null>(null);
 
   const [picker, setPicker] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -117,9 +121,16 @@ function Sweepstake() {
     setSelectedSweep(target.id);
     setAction({ sweepId: target.id, progress: null });
     try {
-      const horse = await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
-      const text = horse ? `You're in. You pulled ${horse} from the hat!` : "You're in. Your NFT ticket is below.";
+      const bought = await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
+      const text = bought ? `You're in. You pulled ${bought.horse} from the hat!` : "You're in. Your NFT ticket is below.";
       setSweepMessage({ sweepId: target.id, tone: "good", text });
+      if (bought && overview.data) {
+        const { ticketId, horse } = bought;
+        setPurchase({ ticketId, sweepId: target.id, horse, fee: feeLabel(target.fee, overview.data.token), image: null });
+        void loadTicketImage(ticketId).then((image) =>
+          setPurchase((current) => (current?.ticketId === ticketId ? { ...current, image } : current)),
+        );
+      }
     } catch (err) {
       setSweepMessage({ sweepId: target.id, tone: "bad", text: friendlyError(err) });
     } finally {
@@ -342,6 +353,8 @@ function Sweepstake() {
           never enter a result, anyone can cancel a sweep a week after entries close, and its tickets get refunds.
         </p>
       </section>
+
+      {purchase && <SuccessModal purchase={purchase} onClose={() => setPurchase(null)} />}
 
       <footer className="footer">
         <a href={`${EXPLORER}/address/${SWEEP_ADDRESS}#code`} target="_blank" rel="noreferrer">

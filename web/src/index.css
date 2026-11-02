@@ -530,6 +530,54 @@ button:disabled {
   }
 }
 
+/* After a purchase */
+
+.success {
+  width: min(92vw, 360px);
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 3px solid var(--tier);
+  border-radius: 18px;
+}
+
+.success::backdrop {
+  background: rgb(5 15 11 / 75%);
+}
+
+.success-body {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 20px 20px;
+  text-align: center;
+}
+
+.success h2 {
+  font: 700 40px / 1 var(--serif);
+  color: var(--tier);
+}
+
+.success img,
+.success-art-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 14px;
+}
+
+.success-art-placeholder {
+  background: var(--panel);
+}
+
+.success .buy-button {
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  text-decoration: none;
+  line-height: 26px;
+}
+
 /* How it works */
 
 .how ol {
