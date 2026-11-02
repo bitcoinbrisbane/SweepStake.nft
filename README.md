@@ -4,16 +4,18 @@
 
 An onchain sweepstake for the 2026 Melbourne Cup (Tuesday 3 November, Flemington), paid in a USD stablecoin chosen at deployment. By default that's USDT on Ethereum mainnet.
 
-## Status
-
-The contract is being replaced, and the replacement isn't on mainnet yet.
+## Live
 
 | | |
 |---|---|
-| Entry page | https://sweepstake-6wo88.ondigitalocean.app says the sweep isn't open yet. Add `?testnet=true` to use the test contract |
-| Test contract, on Sepolia | [`0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20`](https://sepolia.etherscan.io/address/0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20#code) |
-| Old contract, on Ethereum mainnet | [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#code) uses an earlier design. Don't enter it |
+| Entry page | https://sweepstake-6wo88.ondigitalocean.app |
+| Contract, on Ethereum mainnet | [`0x5a5f04760A99F0792C0a3ff0B5A14890c7292f07`](https://etherscan.io/address/0x5a5f04760A99F0792C0a3ff0B5A14890c7292f07#code) |
 | Owner | [`0x077Be890F8e395987732605BE1A71D72FD0e9882`](https://etherscan.io/address/0x077Be890F8e395987732605BE1A71D72FD0e9882) |
+| Test version, on Sepolia | Add `?testnet=true` to the entry page. The contract is [`0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20`](https://sepolia.etherscan.io/address/0x7c054427A4f0264Db51E9B8eAbfd2221B995dC20#code) |
+
+Entries close at 2:50pm AEDT (1:50pm Brisbane) on 3 November 2026, and results can go in from 3:20pm AEDT (2:20pm Brisbane).
+
+An earlier version at [`0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3`](https://etherscan.io/address/0x8Dd82896fb5a4B05C8Fe99A7bE223a44DF987fA3#writeContract) drew horses at the close. Its sweeps are cancelled, and its ticket holder can get their fee back by calling `claim` on Etherscan.
 
 ## How it works
 

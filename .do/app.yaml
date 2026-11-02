@@ -12,11 +12,10 @@ static_sites:
     build_command: yarn build
     output_dir: dist
     envs:
-      # The deployed contract. Empty until the replacement goes in, and the page says the sweep isn't open.
-      # If this changes, apply the spec so the page rebuilds.
+      # The deployed contract. If this changes, apply the spec and force a rebuild.
       - key: VITE_SWEEP_ADDRESS
         scope: BUILD_TIME
-        value: ""
+        value: "0x5a5f04760A99F0792C0a3ff0B5A14890c7292f07"
       # The test contract on Sepolia, used when the URL has ?testnet=true.
       - key: VITE_TESTNET_SWEEP_ADDRESS
         scope: BUILD_TIME
