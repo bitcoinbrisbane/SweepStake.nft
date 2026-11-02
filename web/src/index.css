@@ -230,12 +230,30 @@ button:disabled {
   background: var(--bg);
   border: 3px solid var(--tier);
   border-radius: 18px;
+  cursor: pointer;
+}
+
+.sweep:hover {
+  background: var(--panel);
+}
+
+.sweep-selected,
+.sweep-selected:hover {
+  background: var(--panel);
+  box-shadow: 0 0 0 3px var(--tier);
 }
 
 .sweep-fee {
+  text-align: center;
+}
+
+.sweep-select {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 8px;
   font: 700 68px / 1 var(--serif);
   color: var(--tier);
-  text-align: center;
 }
 
 .sweep-sub {
@@ -407,12 +425,43 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
-.runner-table th.runner-sweep,
-.runner-table td.runner-sweep {
-  width: 56px;
+.runner-table .runner-ticket {
+  width: 48px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.runner-table .runner-owner {
+  width: 116px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.runners-sweep {
   color: var(--tier);
+  white-space: nowrap;
+}
+
+.sold {
+  display: grid;
+  gap: 8px;
+}
+
+.sold h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sold ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .runner-horse {
@@ -473,9 +522,13 @@ button:disabled {
     padding: 4px 2px;
   }
 
-  .runner-table th.runner-sweep,
-  .runner-table td.runner-sweep {
-    width: 40px;
+  .runner-table .runner-ticket {
+    width: 34px;
+  }
+
+  .runner-table .runner-owner {
+    width: 92px;
+    font-size: 12px;
   }
 
   .runner-horse {

@@ -40,6 +40,8 @@ type ButtonState = { label: string; disabled?: boolean; onClick?: () => void };
 
 export function SweepCard(props: {
   sweep: Sweep;
+  selected: boolean;
+  onSelect: (sweepId: number) => void;
   overview: Overview;
   closed: boolean;
   wallet: WalletState;
@@ -52,7 +54,8 @@ export function SweepCard(props: {
   onConnect: () => void;
   onSwitch: () => void;
 }) {
-  const { sweep, overview, closed, wallet, mine, busy, active, progress, message, onBuy, onConnect, onSwitch } = props;
+  const { sweep, selected, onSelect, overview, closed, wallet, mine, busy, active, progress, message, onBuy, onConnect, onSwitch } =
+    props;
   const { token } = overview;
   const capacity = Math.max(overview.activeHorses, sweep.ticketCount);
   const full = sweep.ticketCount >= overview.activeHorses;
@@ -75,8 +78,17 @@ export function SweepCard(props: {
   const result = outcome(sweep, token);
 
   return (
-    <article className="sweep" style={{ "--tier": TIER_COLOURS[sweep.id] ?? "var(--gold)" } as CSSProperties}>
-      <h2 className="sweep-fee">{feeLabel(sweep.fee, token)}</h2>
+    <article
+      className={selected ? "sweep sweep-selected" : "sweep"}
+      style={{ "--tier": TIER_COLOURS[sweep.id] ?? "var(--gold)" } as CSSProperties}
+      onClick={() => onSelect(sweep.id)}
+    >
+      {/* The whole panel takes clicks. This button gives keyboards and screen readers the same thing. */}
+      <h2 className="sweep-fee">
+        <button type="button" className="sweep-select" aria-pressed={selected}>
+          {feeLabel(sweep.fee, token)}
+        </button>
+      </h2>
       <p className="sweep-sub">{amountLabel(sweep.fee, token)} per NFT ticket</p>
 
       <div className="ticks" aria-hidden="true">

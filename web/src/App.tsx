@@ -1,6 +1,16 @@
-import { useCallback, useState } from "react";
-import type { Address } from "viem";
-import { amountLabel, buyTicket, claimTicket, loadMine, loadOverview, type Progress, type Sweep, type Ticket } from "./chain";
+import { useCallback, useEffect, useState } from "react";
+import {
+  amountLabel,
+  buyTicket,
+  claimTicket,
+  fundLocalWallet,
+  loadMine,
+  loadOverview,
+  shortAddress,
+  type Progress,
+  type Sweep,
+  type Ticket,
+} from "./chain";
 import { CHAIN, EXPLORER, isConfigured, IS_LOCAL, RACE_START, SWEEP_ADDRESS } from "./config";
 import { friendlyError } from "./errors";
 import { MyTickets } from "./MyTickets";
@@ -26,10 +36,6 @@ export default function App() {
     );
   }
   return <Sweepstake />;
-}
-
-function shortAddress(address: Address) {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 function countdown(seconds: number) {
@@ -61,6 +67,16 @@ function Sweepstake() {
   const { account } = wallet;
   const loadAccount = useCallback(() => (account ? loadMine(account) : Promise.resolve(null)), [account]);
   const mine = usePoll(loadAccount, POLL_MS);
+  const refreshMine = mine.refresh;
+
+  useEffect(() => {
+    if (!IS_LOCAL || !account) return;
+    fundLocalWallet(account)
+      .then(() => refreshMine())
+      .catch(() => {});
+  }, [account, refreshMine]);
+
+  const [selectedSweep, setSelectedSweep] = useState(0);
 
   const [picker, setPicker] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
@@ -95,6 +111,7 @@ function Sweepstake() {
   async function buy(target: Sweep) {
     if (!wallet.client) return;
     setSweepMessage(null);
+    setSelectedSweep(target.id);
     setAction({ sweepId: target.id, progress: null });
     try {
       await buyTicket(wallet.client, target, (progress) => setAction({ sweepId: target.id, progress }));
@@ -136,7 +153,11 @@ function Sweepstake() {
         {account ? (
           <div className="wallet-chip">
             <span>{shortAddress(account)}</span>
-            {mine.data && <span className="wallet-balance">{amountLabel(mine.data.balance, mine.data.token)}</span>}
+            {mine.data && (
+              <span className="wallet-balance">
+                {amountLabel(mine.data.balance, mine.data.token)} on {CHAIN.name}
+              </span>
+            )}
             <button className="link-button" onClick={wallet.disconnect}>
               Disconnect
             </button>
@@ -150,8 +171,8 @@ function Sweepstake() {
 
       {IS_LOCAL && (
         <p className="alert" role="note">
-          This is a local test chain. Balances here are test USDT, not your real funds, and nothing on this page can spend
-          real money.
+          This is a local test chain. Your wallet gets free test tUSDT here, which isn't your real balance, and nothing on
+          this page can spend real money.
         </p>
       )}
 
@@ -233,6 +254,8 @@ function Sweepstake() {
               <SweepCard
                 key={s.id}
                 sweep={s}
+                selected={s.id === selectedSweep}
+                onSelect={setSelectedSweep}
                 overview={data}
                 closed={closed}
                 wallet={wallet}
@@ -261,7 +284,7 @@ function Sweepstake() {
         />
       )}
 
-      {data && <Runners overview={data} myTickets={mine.data?.tickets ?? []} />}
+      {data && <Runners overview={data} sweepId={selectedSweep} account={account} />}
 
       <section className="how">
         <h2>How it works</h2>

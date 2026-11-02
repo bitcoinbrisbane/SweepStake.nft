@@ -1,48 +1,80 @@
 import type { CSSProperties } from "react";
-import { feeLabel, SweepState, ticketNumber, type Overview, type Runner, type Sweep, type Ticket } from "./chain";
+import type { Address } from "viem";
+import { feeLabel, shortAddress, SweepState, ticketNumber, type Overview, type Sweep } from "./chain";
+import { EXPLORER } from "./config";
 import { TIER_COLOURS } from "./SweepCard";
 
-function Holder({ runner, sweep, mine }: { runner: Runner; sweep: Sweep; mine: Set<bigint> }) {
-  if (sweep.state === SweepState.Open) return <span title="Not drawn yet">·</span>;
-  const ticket = runner.tickets[sweep.id];
-  if (!ticket) return <span title="Nobody in this sweep drew this horse">–</span>;
-  if (mine.has(ticket)) return <strong className="runner-you">You</strong>;
-  return <span title={`Ticket ${ticketNumber(ticket)}`}>#{ticketNumber(ticket)}</span>;
+function Owner({ owner, account }: { owner: Address; account: Address | null }) {
+  if (owner === account) return <strong className="runner-you">You</strong>;
+  if (!EXPLORER) return <span title={owner}>{shortAddress(owner)}</span>;
+  return (
+    <a href={`${EXPLORER}/address/${owner}`} target="_blank" rel="noreferrer" title={owner}>
+      {shortAddress(owner)}
+    </a>
+  );
 }
 
-/** Every horse, and who holds it in each sweep. Horses are only handed out at the draw. */
-export function Runners({ overview, myTickets }: { overview: Overview; myTickets: Ticket[] }) {
-  const { runners, sweeps, token, winningHorse } = overview;
-  const mine = new Set(myTickets.map((t) => t.id));
-  const anyDrawn = sweeps.some((s) => s.state !== SweepState.Open);
+function note(sweep: Sweep) {
+  if (sweep.state === SweepState.Open) {
+    return "You buy an NFT ticket, not a horse. Each ticket gets a random horse when entries close, and this table fills in then.";
+  }
+  if (sweep.state === SweepState.Cancelled) return "This sweep was cancelled, so its NFT tickets can claim a refund.";
+  return "Each row shows the NFT ticket holding that horse in this sweep, and who owns that NFT right now. A dash means nobody in this sweep drew it.";
+}
+
+/** Every horse, and who owns the NFT holding it in the chosen sweep. Horses are only handed out at the draw. */
+export function Runners({
+  overview,
+  sweepId,
+  account,
+}: {
+  overview: Overview;
+  sweepId: number;
+  account: Address | null;
+}) {
+  const { runners, token, winningHorse } = overview;
+  const sweep = overview.sweeps[sweepId];
+  const owners = new Map(sweep.tickets.map((t) => [t.id, t.owner]));
+  const undrawn = sweep.state === SweepState.Open;
+  const style = { "--tier": TIER_COLOURS[sweep.id] ?? "var(--gold)" } as CSSProperties;
 
   return (
-    <section className="runners">
-      <h2>The runners</h2>
-      <p className="muted">
-        {anyDrawn
-          ? "A number is the NFT ticket holding that horse in that sweep. A dash means nobody in that sweep drew it, and a dot means that sweep hasn't been drawn yet."
-          : "You buy an NFT ticket, not a horse. Each ticket gets a random horse when entries close, and this table fills in then."}
-      </p>
+    <section className="runners" style={style}>
+      <h2>
+        The runners <span className="runners-sweep">{feeLabel(sweep.fee, token)} sweep</span>
+      </h2>
+      <p className="muted">{note(sweep)}</p>
+
+      {undrawn && sweep.tickets.length > 0 && (
+        <div className="sold">
+          <h3>NFT tickets sold so far</h3>
+          <ul>
+            {sweep.tickets.map((t) => (
+              <li key={t.id.toString()}>
+                #{ticketNumber(t.id)} <Owner owner={t.owner} account={account} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <table className="runner-table">
         <thead>
           <tr>
             <th scope="col">Horse</th>
-            {sweeps.map((s) => (
-              <th
-                key={s.id}
-                scope="col"
-                className="runner-sweep"
-                style={{ "--tier": TIER_COLOURS[s.id] ?? "var(--gold)" } as CSSProperties}
-              >
-                {feeLabel(s.fee, token)}
-              </th>
-            ))}
+            <th scope="col" className="runner-ticket">
+              NFT
+            </th>
+            <th scope="col" className="runner-owner">
+              NFT owner
+            </th>
           </tr>
         </thead>
         <tbody>
           {runners.map((runner) => {
             const won = winningHorse === runner.index;
+            const ticket = runner.tickets[sweep.id];
+            const owner = owners.get(ticket);
             return (
               <tr key={runner.index} className={won ? "runner-winner" : runner.scratched ? "runner-scratched" : undefined}>
                 <td>
@@ -56,15 +88,8 @@ export function Runners({ overview, myTickets }: { overview: Overview; myTickets
                     </span>
                   </div>
                 </td>
-                {sweeps.map((s) => (
-                  <td
-                    key={s.id}
-                    className="runner-sweep"
-                    style={{ "--tier": TIER_COLOURS[s.id] ?? "var(--gold)" } as CSSProperties}
-                  >
-                    <Holder runner={runner} sweep={s} mine={mine} />
-                  </td>
-                ))}
+                <td className="runner-ticket">{undrawn ? "·" : ticket ? `#${ticketNumber(ticket)}` : "–"}</td>
+                <td className="runner-owner">{owner ? <Owner owner={owner} account={account} /> : undrawn ? "·" : "–"}</td>
               </tr>
             );
           })}

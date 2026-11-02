@@ -1,4 +1,4 @@
-import { formatUnits, type Account, type Address, type Chain, type Hash, type Transport, type WalletClient } from "viem";
+import { encodeFunctionData, formatUnits, parseAbi, type Account, type Address, type Chain, type Hash, type Transport, type WalletClient } from "viem";
 import { sweepAbi } from "./abi/sweep";
 import { tokenAbi } from "./abi/token";
 import { artClient, publicClient, SWEEP_ADDRESS } from "./config";
@@ -17,6 +17,8 @@ export type Sweep = {
   ticketCount: number;
   winningTicket: bigint;
   pool: bigint;
+  /** Every ticket sold in this sweep, and who owns that NFT right now. */
+  tickets: { id: bigint; owner: Address }[];
 };
 
 export type Runner = {
@@ -69,6 +71,7 @@ export const feeLabel = (fee: bigint, token: Token) => `$${formatUnits(fee, toke
 const ID_BASE = 1000;
 const ticketId = (sweepId: number, number: number) => BigInt((sweepId + 1) * ID_BASE + number);
 export const ticketNumber = (id: bigint) => Number(id) % ID_BASE;
+export const shortAddress = (address: Address) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 /** Remembers something that never changes onchain, but tries again next time if loading it failed. */
 function once<T>(load: () => Promise<T>) {
@@ -107,6 +110,7 @@ const loadField = once(async () => {
   );
 });
 
+/** The contract isn't enumerable, but there are at most 72 tickets, so this asks who owns each one. */
 async function loadSweeps(): Promise<Sweep[]> {
   const count = await publicClient.readContract({ ...sweep, functionName: "sweepCount" });
   return Promise.all(
@@ -116,7 +120,14 @@ async function loadSweeps(): Promise<Sweep[]> {
         publicClient.readContract({ ...sweep, functionName: "sweeps", args }),
         publicClient.readContract({ ...sweep, functionName: "prizePool", args }),
       ]);
-      return { id, fee, state, ticketCount, winningTicket, pool };
+      const tickets = await Promise.all(
+        Array.from({ length: ticketCount }, async (_, i) => {
+          const ticket = ticketId(id, i + 1);
+          const owner = await publicClient.readContract({ ...sweep, functionName: "ownerOf", args: [ticket] });
+          return { id: ticket, owner };
+        }),
+      );
+      return { id, fee, state, ticketCount, winningTicket, pool, tickets };
     }),
   );
 }
@@ -198,7 +209,6 @@ async function loadTicket(id: bigint, sweepId: number, token: Token): Promise<Ti
   };
 }
 
-/** The contract isn't enumerable, but there are at most 72 tickets, so just ask who owns each one. */
 export async function loadMine(account: Address): Promise<Mine> {
   const token = await loadToken();
   const [sweeps, balance, eth] = await Promise.all([
@@ -206,15 +216,39 @@ export async function loadMine(account: Address): Promise<Mine> {
     publicClient.readContract({ address: token.address, abi: tokenAbi, functionName: "balanceOf", args: [account] }),
     publicClient.getBalance({ address: account }),
   ]);
-  const all = sweeps.flatMap((s) =>
-    Array.from({ length: s.ticketCount }, (_, i) => ({ id: ticketId(s.id, i + 1), sweepId: s.id })),
+  const mine = sweeps.flatMap((s) =>
+    s.tickets.filter((t) => t.owner === account).map((t) => ({ id: t.id, sweepId: s.id })),
   );
-  const owners = await Promise.all(
-    all.map(({ id }) => publicClient.readContract({ ...sweep, functionName: "ownerOf", args: [id] })),
-  );
-  const mine = all.filter((_, i) => owners[i] === account);
   const tickets = await Promise.all(mine.map(({ id, sweepId }) => loadTicket(id, sweepId, token)));
   return { token, tickets, balance, eth };
+}
+
+// ---------------------------------------------------------------- local test chain
+
+const LOCAL_DEV_ACCOUNT = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // anvil's first unlocked account
+const localFunded = new Set<Address>();
+
+/** Local chain only: gives a wallet test ETH and test tokens the first time it connects, so it can try buying. */
+export async function fundLocalWallet(account: Address) {
+  if (localFunded.has(account)) return;
+  localFunded.add(account);
+  const request = publicClient.request as unknown as (args: { method: string; params: unknown[] }) => Promise<unknown>;
+  const token = await loadToken();
+  if ((await publicClient.getBalance({ address: account })) === 0n) {
+    await request({ method: "anvil_setBalance", params: [account, "0x8ac7230489e80000"] }); // 10 ETH
+  }
+  const balance = await publicClient.readContract({
+    address: token.address,
+    abi: tokenAbi,
+    functionName: "balanceOf",
+    args: [account],
+  });
+  if (balance > 0n) return;
+  const data = encodeFunctionData({
+    abi: parseAbi(["function mint(address to, uint256 amount)"]),
+    args: [account, 100n * 10n ** BigInt(token.decimals)],
+  });
+  await request({ method: "eth_sendTransaction", params: [{ from: LOCAL_DEV_ACCOUNT, to: token.address, data }] });
 }
 
 // ---------------------------------------------------------------- writes
