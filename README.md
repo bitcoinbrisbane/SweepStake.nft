@@ -114,7 +114,7 @@ TOKEN=<address> ENTRIES_CLOSE=1793677800 RESULTS_OPEN=1793679600 forge script sc
 
 The betting currency is passed to the constructor. Use a USD stablecoin, because tickets are labelled in dollars. `TOKEN` defaults to USDT on Ethereum mainnet and is required on any other chain. The script works out the fees from the token's decimals, and deploying fails if that address has no contract on that chain. The token, fees and both times can't be changed after deploying.
 
-USDT requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value. The entry page handles that.
+USDT requires an existing allowance to be reset to 0 before it can be changed to a new non-zero value. The entry page handles that. It also approves the fee times the sweep's tickets (48 USDT for 24 tickets in the $2 sweep), so buying a second ticket doesn't need a second approval. The contract only ever takes the fee for the ticket being bought.
 
 If `--verify` fails on an older Foundry build, it's because Etherscan's current API needs a `chainid` that those builds drop. Run `foundryup`, or submit the source to `https://api.etherscan.io/v2/api?chainid=1` yourself. The contract is deployed either way.
 

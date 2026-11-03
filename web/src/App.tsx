@@ -330,10 +330,11 @@ function Sweepstake() {
         <h2>How it works</h2>
         <ol>
           <li>
-            <strong>Buy an NFT ticket.</strong> Pay in {symbol} on {CHAIN.name}, with a little ETH for gas. Your wallet asks
-            twice: once to allow the {symbol}, and once to buy. Every ticket is a real NFT in your wallet, with its pixel art
-            stored onchain. You can buy as many as you like, and whoever holds a ticket when claiming gets paid, so you can
-            send or sell them too.
+            <strong>Buy an NFT ticket.</strong> Pay in {symbol} on {CHAIN.name}, with a little ETH for gas. For your first
+            ticket your wallet asks twice: once to allow the {symbol}, and once to buy. The allowance covers every ticket in
+            that sweep, so buying more only asks once, and you only pay for the tickets you buy. Every ticket is a real NFT in
+            your wallet, with its pixel art stored onchain. You can buy as many as you like, and whoever holds a ticket when
+            claiming gets paid, so you can send or sell them too.
           </li>
           <li>
             <strong>Get your horse.</strong> Your ticket pulls a random horse from that sweep's hat straight away, and each horse

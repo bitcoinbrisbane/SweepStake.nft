@@ -264,10 +264,14 @@ async function confirmed(hash: Hash) {
   return receipt;
 }
 
-/** Public RPCs can lag behind the block we just saw, and the next step's simulation needs this to be visible. */
-async function waitForAllowance(token: Token, owner: Address, amount: bigint) {
+/**
+ * Public RPCs can lag behind the block we just saw, and the next step's simulation needs this to be visible.
+ * Wallets let people change the amount they approve, so this waits for what the next step needs rather than
+ * the amount asked for.
+ */
+async function waitForAllowance(token: Token, owner: Address, ready: (allowance: bigint) => boolean) {
   for (let tries = 0; tries < 15; tries++) {
-    if ((await readAllowance(token, owner)) === amount) return;
+    if (ready(await readAllowance(token, owner))) return;
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 }
@@ -276,6 +280,7 @@ async function approve(
   wallet: Wallet,
   token: Token,
   amount: bigint,
+  ready: (allowance: bigint) => boolean,
   report: (phase: Progress["phase"], hash?: Hash) => void,
 ) {
   report("wallet");
@@ -289,7 +294,7 @@ async function approve(
   const hash = await wallet.writeContract(request);
   report("network", hash);
   await confirmed(hash);
-  await waitForAllowance(token, wallet.account.address, amount);
+  await waitForAllowance(token, wallet.account.address, ready);
 }
 
 const simulateEnter = (wallet: Wallet, target: Sweep) =>
@@ -301,9 +306,11 @@ const simulateEnter = (wallet: Wallet, target: Sweep) =>
   });
 
 /**
- * Buys one ticket, returning its id and the horse it pulled from the hat. Approves the token first if needed. USDT refuses to change one non-zero allowance
- * straight to another, so a smaller leftover approval has to be cleared first. An approval that's
- * already big enough, such as from an attempt abandoned part way, is reused.
+ * Buys one ticket, returning its id and the horse it pulled from the hat. Approves the token first if needed,
+ * up to the price of every ticket in the sweep, so buying another doesn't need a second approval. USDT refuses
+ * to change one non-zero allowance straight to another, so a smaller leftover approval has to be cleared first.
+ * An approval that's already big enough is reused, whichever sweep it was made for, because all the sweeps are
+ * one contract and share one allowance.
  */
 export async function buyTicket(wallet: Wallet, target: Sweep, onProgress: (p: Progress) => void) {
   const token = await loadToken();
@@ -326,8 +333,20 @@ export async function buyTicket(wallet: Wallet, target: Sweep, onProgress: (p: P
     return (phase: Progress["phase"], hash?: Hash) => onProgress({ step: current, of, title, phase, hash });
   };
 
-  if (needsReset) await approve(wallet, token, 0n, reporter(`Clear your old ${token.symbol} approval`));
-  if (needsApproval) await approve(wallet, token, target.fee, reporter(`Allow ${amountLabel(target.fee, token)}`));
+  if (needsReset) {
+    await approve(wallet, token, 0n, (current) => current === 0n, reporter(`Clear your old ${token.symbol} approval`));
+  }
+  if (needsApproval) {
+    const tickets = target.ticketCount + target.available;
+    const cap = target.fee * BigInt(tickets);
+    await approve(
+      wallet,
+      token,
+      cap,
+      (current) => current >= target.fee,
+      reporter(`Allow up to ${amountLabel(cap, token)}, enough for all ${tickets} tickets`),
+    );
+  }
 
   const report = reporter("Buy your NFT ticket");
   report("wallet");
